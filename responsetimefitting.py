@@ -2,19 +2,34 @@ import numpy as np
 import pandas as pd
 import osrm
 
-from scipy.stats import lognorm, gamma
-
+from scipy.stats import lognorm, gamma, bayes_mvs
 from sklearn import linear_model
+import copy
 
-from utils import lonlat_to_xy, pre_process_station_name, xy_to_lonlat
+from helpers import lonlat_to_xy, pre_process_station_name, xy_to_lonlat
 
 
 def prepare_data_for_response_time_analysis(incidents, deployments, stations):
-    """ Prepare data for fitting travel times """
+    """ Prepare data for fitting dispatch, turnout, and travel times.
+
+    params
+    ------
+    incidents: DataFrame
+        Contains the log of incidents.
+    deployments: DataFrame
+        Contains the log of deployments.
+    stations: DataFrame
+        Contains information on the fire stations.
+
+    return
+    ------
+    The merged and preprocessed DataFrame. """
     
     # specify duplicate column names before merging
-    incidents.rename({"kazerne_groep":"incident_kazerne_groep"}, axis="columns", inplace=True)
-    deployments.rename({"kazerne_groep":"inzet_kazerne_groep"}, axis="columns", inplace=True)
+    incidents.rename({"kazerne_groep":"incident_kazerne_groep"},
+        axis="columns", inplace=True)
+    deployments.rename({"kazerne_groep":"inzet_kazerne_groep"},
+        axis="columns", inplace=True)
 
     # merge incidents and deployments
     merged = pd.merge(deployments, incidents, how="inner",
@@ -47,11 +62,12 @@ def prepare_data_for_response_time_analysis(incidents, deployments, stations):
                     axis="columns", inplace=True)
 
     # create the merged dataset
-    df = pd.merge(merged, station_locations, left_on="inzet_kazerne_naam",
+    df = pd.merge(merged, stations, left_on="inzet_kazerne_naam",
                   right_on="kazerne", how = "inner")
 
     # filter on priority == 1 and volgnummer == 1
-    df = df[(df["dim_prioriteit_prio"]==1) & (df["inzet_terplaatse_volgnummer"]==1)]
+    df = df[(df["dim_prioriteit_prio"]==1) &
+            (df["inzet_terplaatse_volgnummer"]==1)]
 
     return df
 
@@ -86,9 +102,10 @@ def add_osrm_distance_and_duration(df, osrm_host="http://192.168.56.101:5000"):
     params
     ------
     df: DataFrame
-        merged data of incidents and deployments. Must contain the following columns: 
-        {station_longitude, station_latitude, incident_longitude, incident_latitude}.
-        If not present, call '..' first.
+        merged data of incidents and deployments. Must contain the 
+        following columns: {station_longitude, station_latitude,
+        incident_longitude, incident_latitude}.If not present, call
+        'prepare_data_for_response_time_analysis' first.
     osrm_host: str
         url to the OSRM API, defaults to 'http://192.168.56.101:5000', which is the
         default if running OSRM locally.
@@ -144,7 +161,7 @@ def fit_lognorm_rv(x, **kwargs):
     ------
     The fitted scipy.stats.lognorm object.
     """
-    shape, loc, scale = lognorm.fit(X, kwargs)
+    shape, loc, scale = lognorm.fit(x, **kwargs)
     return lognorm(shape, loc, scale)
 
 
@@ -162,7 +179,7 @@ def fit_gamma_rv(x, **kwargs):
     ------
     The fitted scipy.stats.gamma object.
     """
-    shape, loc, scale = gamma.fit(X, kwargs)
+    shape, loc, scale = gamma.fit(x, **kwargs)
     return gamma(shape, loc, scale)
 
 
@@ -192,7 +209,7 @@ def safe_bayes_mvs(x, alpha=0.9):
         return 0, np.inf, 0, np.inf
 
 
-def sample_size_sufficient(x, max_mean_range=30, max_std_range=25):
+def sample_size_sufficient(x, alpha=0.95, max_mean_range=30, max_std_range=25):
     """ Determines if sample size is sufficient based on Bayesian
         confidence intervals and tresholds on the maximum range.
 
@@ -213,7 +230,7 @@ def sample_size_sufficient(x, max_mean_range=30, max_std_range=25):
     specified tresholds, False otherwise.
     """
     mean_lb, mean_ub, std_lb, std_ub = safe_bayes_mvs(x, alpha=alpha)
-    if (mean_ub-mean_ls < max_mean_range) & (std_ub-std_lb < max_std_range):
+    if (mean_ub - mean_lb < max_mean_range) & (std_ub - std_lb < max_std_range):
         return True
     else:
         False
@@ -290,18 +307,14 @@ def model_residual_travel_time(y, x, a, b):
     return rv
 
 
-def model_travel_time(incidents, deployments, stations):
+def model_travel_time(data):
     """ Model the travel time as a function of the estimated travel time 
         from OSRM.
 
     params
     ------
-    incidents: DataFrame
-        Incident log.
-    deployments: DataFrame
-        Deployment log.
-    stations: DataFrame
-        Station location data.
+    data: DataFrame
+        Output of 'prepare_data_for_response_time_analysis'.s
 
     return
     ------
@@ -312,9 +325,6 @@ def model_travel_time(incidents, deployments, stations):
     after prediction. The results can be used to simulate travel times for
     arbitrary incidents.
     """
-    # prepare and merge data
-    data = prepare_data_for_travel_time_analysis(
-        incidents, deployments, stations)
 
     # remove records without travel time
     data = data[~data["inzet_rijtijd"].isnull()]
@@ -370,12 +380,14 @@ def fit_dispatch_times(data, rough_upper_bound=600):
 
     # fit variables per incident type (use backup rv if not enough samples)
     rv_dict = {}
+
     for type_ in data["dim_incident_incident_type"].unique():
+
         X = data[data["dim_incident_incident_type"]==type_]["dispatch_time"]
         if sample_size_sufficient(X):
             rv_dict[type_] = fit_lognorm_rv(X, loc=np.min(X), scale=100)
         else:
-            rv_dict[type_] = backup_rv.copy()
+            rv_dict[type_] = copy.deepcopy(backup_rv)
 
     return rv_dict
 
@@ -403,15 +415,16 @@ def fit_turnout_times(data, station_names, rough_upper_bound=600):
     A dictionary like {'station' -> {'incident type' -> 
     'scipy.stats.gamma object'}}.
     """
+
     # filter stations
     station_names = pd.Series(station_names).str.upper()
     data["inzet_kazerne_groep"] = data["inzet_kazerne_groep"].str.upper()
     data = data[np.isin(data["inzet_kazerne_groep"], station_names)]
 
     # calculate dispatch times
-    df["turnout_time"] = (pd.to_datetime(df["inzet_uitgerukt_datumtijd"]) - 
-                          pd.to_datetime(df["inzet_gealarmeerd_datumtijd"])
-                          ).dt.seconds
+    data["turnout_time"] = (pd.to_datetime(data["inzet_uitgerukt_datumtijd"]) -
+                            pd.to_datetime(data["inzet_gealarmeerd_datumtijd"])
+                            ).dt.seconds
 
     # filter out unrealistic values
     data = data[data["turnout_time"] <= rough_upper_bound]
@@ -431,10 +444,11 @@ def fit_turnout_times(data, station_names, rough_upper_bound=600):
         # backup rv per station
         dfstation = data[data["inzet_kazerne_groep"]==station]
         station_backup_rv = fit_gamma_rv(dfstation["turnout_time"],
-                                         floc=np.min(X)-0.1, scale=100)
+            floc=np.min(dfstation["turnout_time"]) - 0.1, scale=100)
 
         # create dict with entry for every type with station-specific data
         station_rv_dict = {}
+
         for type_ in types:
             X = data[data["dim_incident_incident_type"]==type_]["turnout_time"]
             if sample_size_sufficient(X):
@@ -442,7 +456,7 @@ def fit_turnout_times(data, station_names, rough_upper_bound=600):
                                                       floc=np.min(X)-0.1,
                                                       scale=100)
             else:
-                station_rv_dict[type_] = station_backup_rv.copy()
+                station_rv_dict[type_] = copy.deepcopy(station_backup_rv)
 
         rv_dict[station] = station_rv_dict.copy()
 
