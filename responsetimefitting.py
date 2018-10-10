@@ -12,8 +12,8 @@ from helpers import lonlat_to_xy, pre_process_station_name, xy_to_lonlat
 def prepare_data_for_response_time_analysis(incidents, deployments, stations):
     """ Prepare data for fitting dispatch, turnout, and travel times.
 
-    params
-    ------
+    Parameters
+    ----------
     incidents: DataFrame
         Contains the log of incidents.
     deployments: DataFrame
@@ -21,26 +21,26 @@ def prepare_data_for_response_time_analysis(incidents, deployments, stations):
     stations: DataFrame
         Contains information on the fire stations.
 
-    return
-    ------
+    Returns
+    -------
     The merged and preprocessed DataFrame. """
-    
+
     # specify duplicate column names before merging
-    incidents.rename({"kazerne_groep":"incident_kazerne_groep"},
-        axis="columns", inplace=True)
-    deployments.rename({"kazerne_groep":"inzet_kazerne_groep"},
-        axis="columns", inplace=True)
+    incidents.rename({"kazerne_groep": "incident_kazerne_groep"},
+                     axis="columns", inplace=True)
+    deployments.rename({"kazerne_groep": "inzet_kazerne_groep"},
+                       axis="columns", inplace=True)
 
     # merge incidents and deployments
     merged = pd.merge(deployments, incidents, how="inner",
-        left_on="hub_incident_id", right_on="dim_incident_id")
+                      left_on="hub_incident_id", right_on="dim_incident_id")
 
     # preprocess station name
     merged['inzet_kazerne_naam'] = merged['inzet_kazerne_naam'].apply(
         lambda x: pre_process_station_name(x))
-    
+
     # rename x, y coordinate columns to avoid confusion
-    merged.rename({"st_x":"incident_xcoord", "st_y":"incident_ycoord"}, 
+    merged.rename({"st_x": "incident_xcoord", "st_y": "incident_ycoord"},
                   axis="columns", inplace=True)
     # add longitude, latitude coordinates as well
     merged[["incident_longitude", "incident_latitude"]] = \
@@ -51,41 +51,41 @@ def prepare_data_for_response_time_analysis(incidents, deployments, stations):
     # add x, y coordinates to station location data
     stations["station_xcoord"], stations["station_ycoord"] = \
         [list(l) for l in zip(*list(stations.apply(
-        lambda x: lonlat_to_xy(x["lon"], x["lat"]), axis=1)))]
+         lambda x: lonlat_to_xy(x["lon"], x["lat"]), axis=1)))]
 
     # preprocess station name in same way as for the deployments
     stations["kazerne"] = stations["kazerne"].apply(
         lambda x: pre_process_station_name(x))
 
     # and rename to avoid confusion
-    stations.rename({"lon":"station_longitude", "lat":"station_latitude"},
+    stations.rename({"lon": "station_longitude", "lat": "station_latitude"},
                     axis="columns", inplace=True)
 
     # create the merged dataset
     df = pd.merge(merged, stations, left_on="inzet_kazerne_naam",
-                  right_on="kazerne", how = "inner")
+                  right_on="kazerne", how="inner")
 
     # filter on priority == 1 and volgnummer == 1
-    df = df[(df["dim_prioriteit_prio"]==1) &
-            (df["inzet_terplaatse_volgnummer"]==1)]
+    df = df[(df["dim_prioriteit_prio"] == 1) &
+            (df["inzet_terplaatse_volgnummer"] == 1)]
 
     return df
 
 
 def get_osrm_distance_and_duration(longlat_origin, longlat_destination):
-    """ Calculate distance over the road and normal travel duration from 
+    """ Calculate distance over the road and normal travel duration from
         one point to the other.
 
-    params
-    ------
+    Parameters
+    ----------
     longlat_origin: tuple(float, float)
         coordinates of the start location in decimal longitude and latitude
         (in that order).
     longlat_destination: tuple(float, float)
         coordinates of the destination in decimal longitude and latitude.
 
-    return
-    ------
+    Returns
+    -------
     Tuple of ('distance', 'duration') according to OSRM.
     """
     result = osrm.simple_route(longlat_origin, longlat_destination,
@@ -99,10 +99,10 @@ def add_osrm_distance_and_duration(df, osrm_host="http://192.168.56.101:5000"):
     """ Calculate distance and duration over the road from station to incident
         for every incident in the data.
 
-    params
-    ------
+    Parameters
+    ----------
     df: DataFrame
-        merged data of incidents and deployments. Must contain the 
+        merged data of incidents and deployments. Must contain the
         following columns: {station_longitude, station_latitude,
         incident_longitude, incident_latitude}.If not present, call
         'prepare_data_for_response_time_analysis' first.
@@ -110,8 +110,8 @@ def add_osrm_distance_and_duration(df, osrm_host="http://192.168.56.101:5000"):
         url to the OSRM API, defaults to 'http://192.168.56.101:5000', which is the
         default if running OSRM locally.
 
-    return
-    ------
+    Returns
+    -------
     the DataFrame with two added columns 'osrm_distance' (meters) and 'osrm_duration'
     (seconds).
     """
@@ -129,8 +129,8 @@ def add_osrm_distance_and_duration(df, osrm_host="http://192.168.56.101:5000"):
 def fit_simple_linear_regression(data, xcol, ycol, fit_intercept=False):
     """ Fit simple linear regression on the data.
 
-    params
-    ------
+    Parameters
+    ----------
     data: DataFrame
         the data to fit a model on.
     xcol: str
@@ -138,12 +138,12 @@ def fit_simple_linear_regression(data, xcol, ycol, fit_intercept=False):
     ycol: str
         the name of the column acting as the dependent variable.
 
-    return
-    ------
+    Returns
+    -------
     parameters of fitter model, i.e., a tuple of (intercept, coefficient)
     """
     lm = linear_model.LinearRegression(fit_intercept=fit_intercept)
-    lm.fit(data[xcol].values.reshape(-1,1), data[ycol])
+    lm.fit(data[xcol].values.reshape(-1, 1), data[ycol])
     return lm.intercept_, lm.coef_[0]
 
 
@@ -151,14 +151,14 @@ def fit_lognorm_rv(x, **kwargs):
     """ Fit a lognormal distribution to data and return a fitted
         random variable that can be used for sampling.
 
-    params
-    ------
+    Parameters
+    ----------
     x: array-like
         The data to fit.
     **kwargs: additional arguments passed to scipy.stats.lognorm.fit()
 
-    return
-    ------
+    Returns
+    -------
     The fitted scipy.stats.lognorm object.
     """
     shape, loc, scale = lognorm.fit(x, **kwargs)
@@ -169,14 +169,14 @@ def fit_gamma_rv(x, **kwargs):
     """ Fit a Gamma distribution to data and return a fitted
         random variable that can be used for sampling.
 
-    params
+    Parameters
     ------
     x: array-like
         The data to fit.
     **kwargs: additional arguments passed to scipy.stats.gamma.fit()
 
-    return
-    ------
+    Returns
+    -------
     The fitted scipy.stats.gamma object.
     """
     shape, loc, scale = gamma.fit(x, **kwargs)
@@ -186,26 +186,26 @@ def fit_gamma_rv(x, **kwargs):
 def safe_bayes_mvs(x, alpha=0.9):
     """ Bayesian confidence intervals for mean and standard deviation.
 
-    params
-    ------
+    Parameters
+    ----------
     x: array-like
         the data to compute confidence intervals over
     alpha: float
         the confidence level, defaults to 0.9 (90% confidence)
-    
-    return
-    ------
-    tuple of (lower bound mean, upper bound mean, 
+
+    Returns
+    -------
+    tuple of (lower bound mean, upper bound mean,
     lower bound std, upper bound std).
     """
-    if len(x)>1:
+    if len(x) > 1:
         mean, _, std = bayes_mvs(x, alpha=alpha)
         mean_lb = mean[1][0]
         mean_ub = mean[1][1]
         std_lb = std[1][0]
         std_ub = std[1][1]
-        return mean_lb, mean_ub, std_lb, std_ub 
-    else: 
+        return mean_lb, mean_ub, std_lb, std_ub
+    else:
         return 0, np.inf, 0, np.inf
 
 
@@ -213,8 +213,8 @@ def sample_size_sufficient(x, alpha=0.95, max_mean_range=30, max_std_range=25):
     """ Determines if sample size is sufficient based on Bayesian
         confidence intervals and tresholds on the maximum range.
 
-    params
-    ------
+    Parameters
+    ----------
     x: array-like
         the data to evaluate
     max_mean_range: float or int
@@ -224,8 +224,8 @@ def sample_size_sufficient(x, alpha=0.95, max_mean_range=30, max_std_range=25):
         the maximum range of the confidence interval for the standard
         deviation to classify the sample size as sufficient.
 
-    return
-    ------
+    Returns
+    -------
     True if the size of the confidence intervals are within the
     specified tresholds, False otherwise.
     """
@@ -237,19 +237,19 @@ def sample_size_sufficient(x, alpha=0.95, max_mean_range=30, max_std_range=25):
 
 
 def robust_remove_travel_time_outliers(data):
-    """ Remove outliers in travel time in a robust way by looking at 
+    """ Remove outliers in travel time in a robust way by looking at
         the 50% most reliable data points.
 
-    params
-    ------
+    Parameters
+    ----------
     data: DataFrame
         The data to remove outliers from. Assumes the columns 'osrm_distance'
         and 'inzet_rijtijd' to be present.
-    
+
     notes
     -----
-    Performs two one-way outlier detection methods. It determines tresholds 
-    average speed and on time per distance unit (the inverse of speed) and 
+    Performs two one-way outlier detection methods. It determines tresholds
+    average speed and on time per distance unit (the inverse of speed) and
     cuts the values falling off on the high side. Tresholds are computed as
     follows:
 
@@ -259,22 +259,21 @@ def robust_remove_travel_time_outliers(data):
     are likely to be reliable points. This makes the method robust against
     unreliable data.
 
-    return
-    ------
-    tuple of (filtered DataFrame, minimum speed, maximum speed), where speed 
+    Returns
+    -------
+    tuple of (filtered DataFrame, minimum speed, maximum speed), where speed
     is in kilometers per hour.
     """
     # add km/h and seconds/meter as columns
     data["km_h"] = data["osrm_distance"] / data["inzet_rijtijd"] * 3.6
     data["s_m"] = data["inzet_rijtijd"] / data["osrm_distance"]
-    
+
     # calculate tresholds
-    speed_treshold = data[["km_h", "s_m"]] \
-                        .describe() \
-                        .apply(lambda x: x["75%"] + 1.5*(x["75%"]-x["25%"]))
+    speed_treshold = data[["km_h", "s_m"]].describe() \
+        .apply(lambda x: x["75%"] + 1.5*(x["75%"]-x["25%"]))
     max_speed = speed_treshold.loc["km_h"]
     min_speed = 1 / speed_treshold.loc["s_m"] * 3.6
-    
+
     # filter data and return
     df_filtered = data[(data["km_h"] > min_speed) & (data["km_h"] < max_speed)]
     df_filtered.drop(["km_h", "s_m"], axis=1, inplace=True)
@@ -285,8 +284,8 @@ def model_residual_travel_time(y, x, a, b):
     """ Fit a random variable to the residual of simple linear regression
         on the travel time.
 
-    params
-    ------
+    Parameters
+    ----------
     y: array-like
         The values to predict / simulate.
     x: array-like, same shape as y
@@ -296,9 +295,9 @@ def model_residual_travel_time(y, x, a, b):
     b: float
         The coefficient of the linear model $y ~ a + b*x$.
 
-    return
-    ------
-    A Lognormally distributed random variable (scipy.stats.lognorm) fitted 
+    Returns
+    -------
+    A Lognormally distributed random variable (scipy.stats.lognorm) fitted
     on the residual: $y - (a + bx)$.
     """
     residual = np.array(y) - (a + b*np.array(x))
@@ -308,19 +307,19 @@ def model_residual_travel_time(y, x, a, b):
 
 
 def model_travel_time(data):
-    """ Model the travel time as a function of the estimated travel time 
+    """ Model the travel time as a function of the estimated travel time
         from OSRM.
 
-    params
-    ------
+    Parameters
+    ----------
     data: DataFrame
         Output of 'prepare_data_for_response_time_analysis'.s
 
-    return
-    ------
+    Returns
+    -------
     Tuple of (intercept, coefficient, residual random variable), where
-    the intercept and coefficient form a linear model predicting the 
-    travel time based on the OSRM estimated travle duration and the 
+    the intercept and coefficient form a linear model predicting the
+    travel time based on the OSRM estimated travle duration and the
     random variable is a scipy.stats.lognorm object explaining the residual
     after prediction. The results can be used to simulate travel times for
     arbitrary incidents.
@@ -349,25 +348,25 @@ def fit_dispatch_times(data, rough_upper_bound=600):
     """ Fit a lognormal random variable to the dispatch time per
         incident type.
 
-    params
-    ------
+    Parameters
+    ----------
     data: DataFrame
-        Merged log of deployments and incidents. All deployments in 
-        the data will be used for fitting, so any filtering (e.g., on 
+        Merged log of deployments and incidents. All deployments in
+        the data will be used for fitting, so any filtering (e.g., on
         priority or 'volgnummer') must be done in advance.
     rough_upper_bound: int
         Number of seconds to use as a rough upper bound filter, dispatch
         times above this value are considered unrealistic/unreliable and
         are removed before fitting. DEfaults to 600 seconds (10 minutes).
 
-    return  
-    ------
+    Returns
+    -------
     A dictionary like {'incident type' -> 'scipy.stats.lognorm object'}.
     """
 
     # calculate dispatch times
-    data["dispatch_time"] = (pd.to_datetime(data["inzet_gealarmeerd_datumtijd"])
-        - pd.to_datetime(data["dim_incident_start_datumtijd"])).dt.seconds
+    data["dispatch_time"] = (pd.to_datetime(data["inzet_gealarmeerd_datumtijd"]) -
+                             pd.to_datetime(data["dim_incident_start_datumtijd"])).dt.seconds
 
     # filter out unrealistic values
     data = data[data["dispatch_time"] <= rough_upper_bound]
@@ -383,7 +382,7 @@ def fit_dispatch_times(data, rough_upper_bound=600):
 
     for type_ in data["dim_incident_incident_type"].unique():
 
-        X = data[data["dim_incident_incident_type"]==type_]["dispatch_time"]
+        X = data[data["dim_incident_incident_type"] == type_]["dispatch_time"]
         if sample_size_sufficient(X):
             rv_dict[type_] = fit_lognorm_rv(X, loc=np.min(X), scale=100)
         else:
@@ -396,11 +395,11 @@ def fit_turnout_times(data, station_names, rough_upper_bound=600):
     """ Fit a lognormal random variable to the dispatch time per
         incident type.
 
-    params
-    ------
+    Parameters
+    ----------
     data: DataFrame
-        Merged log of deployments and incidents. All deployments in 
-        the data will be used for fitting, so any filtering (e.g., on 
+        Merged log of deployments and incidents. All deployments in
+        the data will be used for fitting, so any filtering (e.g., on
         priority or 'volgnummer') must be done in advance.
     station_names: array-like of strings
         Names of the stations to fit turnout times for. Must match the
@@ -410,9 +409,9 @@ def fit_turnout_times(data, station_names, rough_upper_bound=600):
         times above this value are considered unrealistic/unreliable and
         are removed before fitting. DEfaults to 600 seconds (10 minutes).
 
-    return  
-    ------
-    A dictionary like {'station' -> {'incident type' -> 
+    Returns
+    -------
+    A dictionary like {'station' -> {'incident type' ->
     'scipy.stats.gamma object'}}.
     """
 
@@ -429,12 +428,6 @@ def fit_turnout_times(data, station_names, rough_upper_bound=600):
     # filter out unrealistic values
     data = data[data["turnout_time"] <= rough_upper_bound]
 
-    # fit one random variable on all data for the types with too few
-    # observations
-    overall_backup_rv = fit_gamma_rv(data["turnout_time"],
-                                     floc=np.min(data["turnout_time"])-0.1,
-                                     scale=100)
-
     # fit variables per incident type (use backup rv if not enough samples)
     types = data["dim_incident_incident_type"].unique()
     rv_dict = {}
@@ -442,15 +435,16 @@ def fit_turnout_times(data, station_names, rough_upper_bound=600):
     for station in station_names:
 
         # backup rv per station
-        dfstation = data[data["inzet_kazerne_groep"]==station]
+        dfstation = data[data["inzet_kazerne_groep"] == station]
         station_backup_rv = fit_gamma_rv(dfstation["turnout_time"],
-            floc=np.min(dfstation["turnout_time"]) - 0.1, scale=100)
+                                         floc=np.min(dfstation["turnout_time"]) - 0.1,
+                                         scale=100)
 
         # create dict with entry for every type with station-specific data
         station_rv_dict = {}
 
         for type_ in types:
-            X = data[data["dim_incident_incident_type"]==type_]["turnout_time"]
+            X = data[data["dim_incident_incident_type"] == type_]["turnout_time"]
             if sample_size_sufficient(X):
                 station_rv_dict[type_] = fit_gamma_rv(X,
                                                       floc=np.min(X)-0.1,

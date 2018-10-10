@@ -1,5 +1,3 @@
-import pandas as pd
-import numpy as np
 from pyproj import Proj, transform
 
 
@@ -19,8 +17,9 @@ def xy_to_lonlat(x, y):
 
 def pre_process_station_name(x):
     """
-    Standarized the station names. This step is necesary to merge different data sets later
+    Standarizes the station names. This step is necesary to merge
+    different data sets later.
     """
-    x = x.upper()        
-    x = x.split()    
+    x = x.upper()
+    x = x.split()
     return x[0]

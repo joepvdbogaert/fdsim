@@ -6,6 +6,8 @@ import numpy as np
 import pandas as pd
 from fbprophet import Prophet
 
+from definitions import ROOT_DIR
+
 
 class BaseIncidentPredictor(object):
     """ Base class for incident predictors. Not useful to instantiate
@@ -46,25 +48,6 @@ class BaseIncidentPredictor(object):
             self._create_sampling_dict()
         return self.sampling_dict
 
-    def sample_next_incident(self, t):
-        """ Sample a random time and type for the next incident.
-
-        params
-        ------
-        t: float
-            The current time in minutes (from an arbitrary random start time)
-
-        return
-        ------
-        The new time t of the next incident and the incident type:
-        (t, incident_type)
-        """
-        d = self.sampling_dict[t//60 % (365*24)]
-        t += np.random.exponential(d["beta"])
-        incident_type = np.random.choice(a=self.types,
-                                         p=d["type_distribution"])
-        return t, incident_type
-
 
 class ProphetIncidentPredictor(BaseIncidentPredictor):
     """ Class that forecasts incident rate for different incident types.
@@ -74,7 +57,7 @@ class ProphetIncidentPredictor(BaseIncidentPredictor):
     treating this as a signal/time series and decomposing it into trend,
     yearly pattern, weekly pattern, and daily pattern.
 
-    example
+    Example
     -------
     >>> predictor = IncidentPredictor(load_forecast=False)
     >>> predictor.fit(incident_data)
@@ -82,8 +65,8 @@ class ProphetIncidentPredictor(BaseIncidentPredictor):
     >>> forecast = predictor.get_forecast()
     >>> forecast.head()
 
-    params
-    ------
+    Parameters
+    ----------
     load_forecast: boolean
         Whether to load a pre-existing forecast from disk.
         Defaults to True, since recomputing forecasts is costly.
@@ -97,13 +80,13 @@ class ProphetIncidentPredictor(BaseIncidentPredictor):
 
     __name__ = "ProphetIncidentPredictor"
 
-    def __init__(self, load_forecast=True, fc_dir="./data/forecasts/",
+    def __init__(self, load_forecast=True, fc_dir="data/forecasts",
                  verbose=True):
 
         self.verbose = verbose
         self.fitted = False
         self.file_name = "prophet_forecast.csv"
-        self.fc_dir = fc_dir
+        self.fc_dir = os.path.join(ROOT_DIR, fc_dir)
         self.forecast = None
         self.sampling_dict = None
 
@@ -118,7 +101,8 @@ class ProphetIncidentPredictor(BaseIncidentPredictor):
                               "load a forecast, initialize with "
                               "'load_forecast=False'. Instance intialized "
                               "without forecast. Create one by running "
-                              "IncidentPredictor.fit() and then .predict().")
+                              "IncidentPredictor.fit() and then .predict()."
+                              "Given directory: {}.".format(self.fc_dir))
 
     def fit(self, data, types=None):
         """ Perform time series decomposition using Prophet.
@@ -129,12 +113,12 @@ class ProphetIncidentPredictor(BaseIncidentPredictor):
         is fitted to the data of that type. The dictionary of models is stored
         as 'self.models_dict' and used when predict is called.
 
-        notes
+        Notes
         -----
         This function does not return anything.
 
-        params
-        ------
+        Parameters
+        ----------
         data: pd.DataFrame
             The incidents to train the models on.
         types: Sequence(str)
@@ -150,7 +134,7 @@ class ProphetIncidentPredictor(BaseIncidentPredictor):
                 print("No incident types specified, using all types in data.")
 
             self.types = [t for t in data["dim_incident_incident_type"]
-                          .unique() if t not in ["nan", "NVT"]]
+                          .unique() if t not in ["nan", "NVT", np.nan]]
 
         if self.verbose:
             print("Preparing incident data for analysis...")
@@ -175,7 +159,7 @@ class ProphetIncidentPredictor(BaseIncidentPredictor):
     def predict(self, periods=365*24, freq="H", save=False):
         """ Forecast the incident rate using Prophet.
 
-        notes
+        Notes
         -----
         Can only be called after calling '.fit()', throws assertion error
         otherwise. Does not return anything, since it's main use cases are
@@ -183,8 +167,8 @@ class ProphetIncidentPredictor(BaseIncidentPredictor):
         file. The result of this method can be obtained by calling
         'get_forecast()' afterwards.
 
-        params
-        ------
+        Parameters
+        ----------
         periods: int
             The number of periods to forecast.
         freq: str,
@@ -218,13 +202,13 @@ class ProphetIncidentPredictor(BaseIncidentPredictor):
         """ Format time columns and create an hourly index needed
             for prediction.
 
-        params
-        ------
+        Parameters
+        ----------
         incidents: pd.DataFrame
             The incident data to prepare.
 
-        return
-        ------
+        Returns
+        -------
         The prepared DataFrame and a pd.Index with hourly timestamps.
         """
         incidents["dim_tijd_uur"] = incidents["dim_tijd_uur"].astype(float)\
@@ -238,8 +222,8 @@ class ProphetIncidentPredictor(BaseIncidentPredictor):
     def _create_prophet_data(self, incidents, type_, new_index):
         """ Create a DataFrame in the format required by Prophet.
 
-        params
-        ------
+        Parameters
+        ----------
         incidents: pd.DataFrame
             The incident data.
         type_: str
@@ -247,8 +231,8 @@ class ProphetIncidentPredictor(BaseIncidentPredictor):
         new_index: pandas.Index object
             Specifies the times that the resulting DataFrame should contain.
 
-        return
-        ------
+        Returns
+        -------
         A DataFrame with two columns: 'ds' and 'y', where 'ds' is the timestamp
         and 'y' is the number of incidents per time_unit. This DataFrame can be
         used directly as input for Prophet.fit().
@@ -266,11 +250,11 @@ class ProphetIncidentPredictor(BaseIncidentPredictor):
 
         return dfprophet[["ds", "y"]]
 
-    def _create_sampling_dict(self, start_time=None, end_time=None):
+    def create_sampling_dict(self, start_time=None, end_time=None):
         """ Create a dictionary that can conveniently be used for
             sampling random incidents based on the forecast.
 
-        notes
+        Notes
         -----
         Stores three results:
             - self.sampling_dict, a dictionary like:
@@ -287,12 +271,16 @@ class ProphetIncidentPredictor(BaseIncidentPredictor):
             - self.sampling_end_time, timestamp of the latest time
               in the dictionary.
 
-        params
-        ------
+        Parameters
+        ----------
         start_time: Timestamp or str convertible to Timestamp
             The earliest time that should be included in the dictionary.
         end_time: Timestamp or str convertible to Timestamp
             The latest time that should be included in the dictionary.
+
+        Returns
+        -------
+        The sampling dictionary as described above.
         """
         assert self.forecast is not None, \
             ("No forecast available, instantiate with load_forecast=True "
@@ -319,3 +307,5 @@ class ProphetIncidentPredictor(BaseIncidentPredictor):
         self.sampling_dict = rates_dict
         self.sampling_start_time = start_time or fc["ds"].min()
         self.sampling_end_time = end_time or fc["ds"].max()
+
+        return rates_dict
