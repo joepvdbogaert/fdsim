@@ -1,3 +1,4 @@
+import numpy as np
 import pandas as pd
 
 
@@ -75,7 +76,7 @@ def get_prio_probabilities_per_type(incidents):
             in prio_probabilities.columns}
 
 
-def get_vehicle_requirements_probabilities(incidents, deployments):
+def get_vehicle_requirements_probabilities(incidents, deployments, vehicles):
     """ Calculate the probabilities of needing a number of vehicles of a
         specific type for a specified incident type.
 
@@ -90,16 +91,16 @@ def get_vehicle_requirements_probabilities(incidents, deployments):
     -------
     Nested dictionary like {"incident type": {"vehicles": prob}}.
     """
-
+    deployments = deployments[np.isin(deployments["voertuig_groep"],vehicles)]
     # add incident type to the deployment data
     deployments = deployments.merge(
         incidents[["dim_incident_id", "dim_incident_incident_type"]],
         left_on="hub_incident_id", right_on="dim_incident_id", how="left")
 
     # filter out missing values and create tuples of needed vehicle types
-    deployments = deployments[~deployments["inzet_voertuig_code"].isnull()]
+    deployments = deployments[~deployments["voertuig_groep"].isnull()]
     grouped = deployments.groupby(["dim_incident_id", "dim_incident_incident_type"]) \
-        .apply(lambda x: tuple(x["inzet_voertuig_code"].sort_values())) \
+        .apply(lambda x: tuple(x["voertuig_groep"].sort_values())) \
         .reset_index()
 
     # count occurences of every combination of vehicles per type

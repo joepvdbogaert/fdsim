@@ -250,7 +250,7 @@ class ProphetIncidentPredictor(BaseIncidentPredictor):
 
         return dfprophet[["ds", "y"]]
 
-    def create_sampling_dict(self, start_time=None, end_time=None):
+    def create_sampling_dict(self, start_time=None, end_time=None, incident_types=None):
         """ Create a dictionary that can conveniently be used for
             sampling random incidents based on the forecast.
 
@@ -286,7 +286,11 @@ class ProphetIncidentPredictor(BaseIncidentPredictor):
             ("No forecast available, instantiate with load_forecast=True "
              "or use .fit() and .predict() to create one.")
 
-        fc = self.forecast.copy()
+        if incident_types is not None:
+            fc = self.forecast[["ds"] + list(incident_types)].copy()
+        else:
+            fc = self.forecast.copy()
+
         fc["ds"] = pd.to_datetime(fc["ds"])
         if start_time is None:
             start_time = fc["ds"].min()

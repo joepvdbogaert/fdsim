@@ -9,7 +9,7 @@ import copy
 from helpers import lonlat_to_xy, pre_process_station_name, xy_to_lonlat
 
 
-def prepare_data_for_response_time_analysis(incidents, deployments, stations):
+def prepare_data_for_response_time_analysis(incidents, deployments, stations, vehicles):
     """ Prepare data for fitting dispatch, turnout, and travel times.
 
     Parameters
@@ -23,7 +23,8 @@ def prepare_data_for_response_time_analysis(incidents, deployments, stations):
 
     Returns
     -------
-    The merged and preprocessed DataFrame. """
+    The merged and preprocessed DataFrame.
+    """
 
     # specify duplicate column names before merging
     incidents.rename({"kazerne_groep": "incident_kazerne_groep"},
@@ -69,10 +70,22 @@ def prepare_data_for_response_time_analysis(incidents, deployments, stations):
     df = df[(df["dim_prioriteit_prio"] == 1) &
             (df["inzet_terplaatse_volgnummer"] == 1)]
 
+    # ensure data types
+    df["inzet_rijtijd"] = df["inzet_rijtijd"].astype(float)
+
+    # remove NaNs in location and cast to string
+    df = df[~df["hub_vak_bk"].isnull()].copy()
+    df["hub_vak_bk"] = df["hub_vak_bk"].astype(int).astype(str)
+    df = df[df["hub_vak_bk"].str[0:2] == "13"]
+
+    # filter vehicles
+    df = df[np.isin(df["voertuig_groep"], vehicles)]
+
     return df
 
 
-def get_osrm_distance_and_duration(longlat_origin, longlat_destination):
+def get_osrm_distance_and_duration(longlat_origin, longlat_destination,
+                                   osrm_host="http://192.168.56.101:5000"):
     """ Calculate distance over the road and normal travel duration from
         one point to the other.
 
@@ -88,6 +101,7 @@ def get_osrm_distance_and_duration(longlat_origin, longlat_destination):
     -------
     Tuple of ('distance', 'duration') according to OSRM.
     """
+    osrm.RequestConfig.host = osrm_host
     result = osrm.simple_route(longlat_origin, longlat_destination,
                                output="route",
                                geometry="wkt")[0]
@@ -280,7 +294,7 @@ def robust_remove_travel_time_outliers(data):
     return df_filtered, min_speed, max_speed
 
 
-def model_residual_travel_time(y, x, a, b):
+def model_noise_travel_time(y, x, a, b):
     """ Fit a random variable to the residual of simple linear regression
         on the travel time.
 
@@ -300,8 +314,8 @@ def model_residual_travel_time(y, x, a, b):
     A Lognormally distributed random variable (scipy.stats.lognorm) fitted
     on the residual: $y - (a + bx)$.
     """
-    residual = np.array(y) - (a + b*np.array(x))
-    shape, loc, scale = lognorm.fit(residual, loc=np.min(residual), scale=1)
+    noise_factor = (np.array(y) - a) / (b*np.array(x))
+    shape, loc, scale = lognorm.fit(noise_factor, loc=np.min(noise_factor), scale=1)
     rv = lognorm(shape, loc, scale)
     return rv
 
@@ -336,12 +350,53 @@ def model_travel_time(data):
         fit_simple_linear_regression(data, "osrm_duration", "inzet_rijtijd")
 
     # model the residuals as a lognormal random variable
-    residual_rv = model_residual_travel_time(data["inzet_rijtijd"],
-                                             data["osrm_duration"],
-                                             intercept,
-                                             coefficient)
+    residual_rv = model_noise_travel_time(data["inzet_rijtijd"],
+                                          data["osrm_duration"],
+                                          intercept,
+                                          coefficient)
 
     return intercept, coefficient, residual_rv
+
+
+def model_travel_time_per_vehicle(data):
+    """ Model the travel time for every vehicle type separately.
+
+    Parameters
+    ----------
+    data: pd.DataFrame
+        Output of 'prepare_data_for_response_time_analysis'.
+
+    Returns
+    -------
+    Dictionary like:
+    {'vehicle' -> {'a' -> intercept,
+                   'b' -> coefficient,
+                   'noise_rv' -> random variable for noise}}
+
+    See 'model_travel_time' for details on those variables.
+    """
+    backup_a, backup_b, backup_rv = model_travel_time(data)
+
+    travel_time_dict = {}
+    travel_time_dict["overall"] = {"a": backup_a,
+                                   "b": backup_b,
+                                   "noise_rv": backup_rv}
+
+    for v in data["voertuig_groep"].unique():
+
+        df_vehicle = data[data["voertuig_groep"] == v]
+
+        if len(df_vehicle) > 1000:
+            a, b, rv = model_travel_time(df_vehicle)
+            travel_time_dict[v] = {"a": a,
+                                   "b": b,
+                                   "noise_rv": rv}
+        else:
+            travel_time_dict[v] = {"a": backup_a,
+                                   "b": backup_b,
+                                   "noise_rv": backup_rv}
+
+    return travel_time_dict
 
 
 def fit_dispatch_times(data, rough_upper_bound=600):
@@ -391,7 +446,7 @@ def fit_dispatch_times(data, rough_upper_bound=600):
     return rv_dict
 
 
-def fit_turnout_times(data, station_names, rough_upper_bound=600):
+def fit_turnout_times(data, station_names=None, rough_upper_bound=600):
     """ Fit a lognormal random variable to the dispatch time per
         incident type.
 
@@ -403,7 +458,8 @@ def fit_turnout_times(data, station_names, rough_upper_bound=600):
         priority or 'volgnummer') must be done in advance.
     station_names: array-like of strings
         Names of the stations to fit turnout times for. Must match the
-        names in data["inzet_kazerne_groep"]
+        names in data["inzet_kazerne_groep"]. If None, use all stations
+        in the data.
     rough_upper_bound: int
         Number of seconds to use as a rough upper bound filter, turn-out
         times above this value are considered unrealistic/unreliable and
@@ -416,9 +472,12 @@ def fit_turnout_times(data, station_names, rough_upper_bound=600):
     """
 
     # filter stations
-    station_names = pd.Series(station_names).str.upper()
     data["inzet_kazerne_groep"] = data["inzet_kazerne_groep"].str.upper()
-    data = data[np.isin(data["inzet_kazerne_groep"], station_names)]
+    if station_names is not None:
+        station_names = pd.Series(station_names).str.upper()
+        data = data[np.isin(data["inzet_kazerne_groep"], station_names)].copy()
+    else:
+        station_names = data["inzet_kazerne_groep"].unique()
 
     # calculate dispatch times
     data["turnout_time"] = (pd.to_datetime(data["inzet_uitgerukt_datumtijd"]) -
@@ -426,7 +485,7 @@ def fit_turnout_times(data, station_names, rough_upper_bound=600):
                             ).dt.seconds
 
     # filter out unrealistic values
-    data = data[data["turnout_time"] <= rough_upper_bound]
+    data = data[data["turnout_time"] <= rough_upper_bound].copy()
 
     # fit variables per incident type (use backup rv if not enough samples)
     types = data["dim_incident_incident_type"].unique()
@@ -434,7 +493,7 @@ def fit_turnout_times(data, station_names, rough_upper_bound=600):
 
     for station in station_names:
 
-        # backup rv per station
+        # backup random variable per station
         dfstation = data[data["inzet_kazerne_groep"] == station]
         station_backup_rv = fit_gamma_rv(dfstation["turnout_time"],
                                          floc=np.min(dfstation["turnout_time"]) - 0.1,
@@ -455,3 +514,45 @@ def fit_turnout_times(data, station_names, rough_upper_bound=600):
         rv_dict[station] = station_rv_dict.copy()
 
     return rv_dict
+
+
+def get_coordinates_locations_stations(data, location_col="hub_vak_bk"):
+    """ Obtain the coordinates of the demand locations and stations.
+
+    Parameters
+    ----------
+    data: pd.DataFrame
+        Merged and preprocessed data (result from 'prepare_data_for_response_time_analysis').
+    location_col: str, column name of data
+        The column to use as identifier for the (demand) location.
+    custom_station_locations: array-like of strings
+        Identifiers of the locations (in data[location_col]) of the stations in case the
+        custom station locations should be used. If provided, does not use the stations
+        in the data.
+
+    Notes
+    -----
+    Assumes data has the following columns for coordinates: 'incident_longitude',
+    'incident_latitude', 'station_longitude', 'station_latitude'. Data must be in the
+    desired coordinate system already.
+
+    Returns
+    -------
+    Two dictionaries. The first contains demand location coordinates:
+    {'location id' -> (longitude, latitude)}
+    The second holds the coordinates of the stations:
+    {'station name' -> (longitude, latitude)}
+    In case of custom station locations, the station name is replaced with an arbitraty
+    identifier.
+    """
+    location_coords = (data.groupby(location_col).apply(
+                       lambda x: tuple([x["incident_longitude"].mean(),
+                                       x["incident_latitude"].mean()]))
+                       .to_dict())
+
+    station_coords = (data.groupby("inzet_kazerne_groep")
+                      .apply(lambda x: tuple([x["station_longitude"].iloc[0],
+                                             x["station_latitude"].iloc[0]]))
+                      .to_dict())
+
+    return location_coords, station_coords
