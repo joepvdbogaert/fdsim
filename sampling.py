@@ -63,7 +63,7 @@ class ResponseTimeSampler():
                               "Given directory: {}.".format(self.data_dir))
 
     def fit(self, incidents=None, deployments=None, stations=None,
-            vehicles=["TS", "RV", "HV", "WO"], osrm_host="http://192.168.56.101:5000",
+            vehicle_types=["TS", "RV", "HV", "WO"], osrm_host="http://192.168.56.101:5000",
             save_prepared_data=False, location_col="hub_vak_bk"):
         """ Fit random variables related to response time.
 
@@ -103,17 +103,21 @@ class ResponseTimeSampler():
             if incidents is not None and deployments is not None and stations is not None:
                 if self.verbose: print("No data loaded, start pre-processing with OSRM...")
                 self._prep_data_for_fitting(incidents=incidents, deployments=deployments,
-                                            stations=stations, vehicles=vehicles,
+                                            stations=stations, vehicles=vehicle_types,
                                             osrm_host=osrm_host, save=save_prepared_data)
             else:
                 raise ValueError("No prepared data loaded and not all data fed to 'fit()'.")
 
-        if self.verbose: print('Fitting random variables on response time...')
-        self.dispatch_rv_dict = fit_dispatch_times(self.data)
-        self.turnout_time_rv_dict = fit_turnout_times(self.data)
-        self.travel_time_dict = model_travel_time_per_vehicle(self.data)
+        if self.verbose: print("Extracting coordinates of stations and demand locations...")
         self.location_coords, self.station_coords = \
-            get_coordinates_locations_stations(self.data, location_col=location_col)
+                    get_coordinates_locations_stations(self.data, location_col=location_col)
+
+        if self.verbose: print('Fitting random variables on response time...')
+        self.high_prio_data = self.data[(self.data["dim_prioriteit_prio"] == 1) &
+                                        (self.data["inzet_terplaatse_volgnummer"] == 1)]
+        self.dispatch_rv_dict = fit_dispatch_times(self.high_prio_data)
+        self.turnout_time_rv_dict = fit_turnout_times(self.high_prio_data)
+        self.travel_time_dict = model_travel_time_per_vehicle(self.high_prio_data)
 
         if self.verbose: print("Response time variables fitted.")
         self.fitted = True
@@ -160,7 +164,7 @@ class ResponseTimeSampler():
             self.station_coords["STATION " + str(i)] = \
                 self.location_coords[station_locations[i]].copy()
 
-        if self.verbose: print("Customer locations set.")
+        if self.verbose: print("Custom station locations set.")
 
     def sample_dispatch_time(self, incident_type):
         """ Sample a random dispatch time given the type of incident.
@@ -220,7 +224,7 @@ class ResponseTimeSampler():
         return 30*60 # seconds
 
     def sample_response_time(self, incident_type, location_id, station_name, vehicle_type,
-                             osrm_host="http://192.168.56.101:5000"):
+                             estimated_time=None, osrm_host="http://192.168.56.101:5000"):
         """ Sample a random response time based on deployment characteristics.
 
         Parameters
@@ -242,11 +246,13 @@ class ResponseTimeSampler():
         """
         orig = self.station_coords[station_name]
         dest = self.location_coords[location_id]
-        _, osrm_duration = get_osrm_distance_and_duration(orig, dest, osrm_host=osrm_host)
+
+        if estimated_time is None:
+            _, estimated_time = get_osrm_distance_and_duration(orig, dest, osrm_host=osrm_host)
 
         dispatch = self.sample_dispatch_time(incident_type)
         turnout = self.sample_turnout_time(incident_type, station_name)
-        travel = self.sample_travel_time(osrm_duration, vehicle_type)
+        travel = self.sample_travel_time(estimated_time, vehicle_type)
         onscene = self.sample_on_scene_time(incident_type, vehicle_type)
         response = dispatch + turnout + travel
 

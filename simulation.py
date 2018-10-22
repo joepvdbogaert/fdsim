@@ -49,24 +49,49 @@ class Simulator():
 
     Example
     -------
+    >>> from simulation import Simulator
+    >>> sim = Simulator(incidents, deployments, stations, vehicle_allocation)
+    >>> sim.simulate_n_incidents(10000)
+    >>> sim.save_log("simulation_results.csv")
 
+    Continue simulating where you left of:
+    >>> sim.simulate_n_incidents(10000, restart=False)
+
+    You can save the simulor object after initializing, so that next time you can
+    skip the initialization (requires the _pickle_ module):
+    >>> sim.save_simulator_state()
+    >>> sim = pickle.load(open('simulator.pickle', 'rb'))
     """
     def __init__(self, incidents, deployments, stations, vehicle_allocation,
-                 load_response_data=True, vehicles=["TS", "RV", "HV", "WO"],
+                 load_response_data=True, load_time_matrix=True, save_response_data=False, 
+                 save_time_matrix=False, vehicle_types=["TS", "RV", "HV", "WO"],
                  predictor="prophet", start_time=None, end_time=None, data_dir="data",
                  osrm_host="http://192.168.56.101:5000", location_col="hub_vak_bk",
                  verbose=True):
 
         self.data_dir = os.path.join(ROOT_DIR, data_dir)
-        self.rsampler = ResponseTimeSampler(load_data=True, data_dir=self.data_dir,
+        self.verbose = verbose
+
+        self.rsampler = ResponseTimeSampler(load_data=load_response_data, data_dir=self.data_dir,
                                             verbose=verbose)
-        self.rsampler.fit()
-        self.isampler = IncidentSampler(incidents, deployments, vehicles,
+
+        self.rsampler.fit(incidents=incidents, deployments=deployments, stations=stations,
+                          vehicle_types=vehicle_types, osrm_host=osrm_host,
+                          save_prepared_data=save_response_data, location_col=location_col)
+
+        self.isampler = IncidentSampler(incidents, deployments, vehicle_types,
                                         start_time=start_time, end_time=end_time,
                                         predictor=predictor, verbose=verbose)
 
         self.vehicles = self._create_vehicle_dict(vehicle_allocation)
-        self.dispatcher = ShortestDurationDispatcher(osrm_host=osrm_host)
+
+        self.dispatcher = ShortestDurationDispatcher(self.rsampler.location_coords,
+                                                     self.rsampler.station_coords,
+                                                     osrm_host=osrm_host,
+                                                     load_matrix=load_time_matrix,
+                                                     save_matrix=save_time_matrix,
+                                                     data_dir=self.data_dir,
+                                                     verbose=verbose)
 
         if start_time is not None:
             self.start_time = start_time
@@ -74,22 +99,22 @@ class Simulator():
             self.start_time = self.isampler.sampling_dict[0]["time"]
         self.end_time = end_time
 
+        if self.verbose: print("Simulator is ready. At your service.")
+
     def _create_vehicle_dict(self, vehicle_allocation):
         """ Create a dictionary of Vehicle objects from the station data. """
         vehicle_allocation["kazerne"] = vehicle_allocation["kazerne"].str.upper()
         vehicle_allocation.rename(columns={"#WO": "WO", "#TS": "TS", "#RV": "RV", "#HV": "HV"},
                                   inplace=True)
         vs = vehicle_allocation.set_index("kazerne").unstack().reset_index()
-        print(self.rsampler.station_coords.keys())
-        print(vs["kazerne"].unique())
-        print(len(vs["kazerne"].unique()))
         vdict = {}
         id_counter = 1
         for r in range(len(vs)):
             for _ in range(vs[0].iloc[r]):
                 coords = self._get_station_coordinates(vs["kazerne"].iloc[r])
-                vdict["V" + str(id_counter)] = Vehicle(id_counter, vs["level_0"].iloc[r],
-                                                       vs["kazerne"].iloc[r], coords)
+                this_id = "V" + str(id_counter)
+                vdict[this_id] = Vehicle(this_id, vs["level_0"].iloc[r],
+                                         vs["kazerne"].iloc[r], coords)
                 id_counter += 1
 
         return vdict
@@ -103,21 +128,41 @@ class Simulator():
         return self.rsampler.station_coords[station_name]
 
     def _initialize_log(self, N):
-        """ Create an empty log. """
+        """ Create an empty log.
+        
+        Initializes an empty self.log and self.log_index = 0. Nothing is returned.
+
+        Parameters
+        ----------
+        N: int
+            The number of incidents that will be simulated.
+        """
+        if N > 100000:
+            # initialize smaller and add more rows later.
+            N = 100000
+
         self.log = pd.DataFrame(np.zeros((N, 15)),
             columns=["t", "time", "incident_type", "location", "priority", "object_function",
                      "vehicle_type", "vehicle_id", "dispatch_time", "turnout_time",
                      "travel_time", "on_scene_time", "response_time", "station",
                      "base_station_of_vehicle"])
+
         self.log_index = 0
 
     def _log(self, values):
         """ Insert values in the log. """
-        self.log.iloc[self.log_index, :].values = values
+        try:
+            self.log.iloc[self.log_index, :] = np.array(values)
+        except IndexError:
+            # if ran out of dataframe size, add rows and continue
+            print("Deployments logged: {}".format(self.log_index))
+            self.log = pd.concat([self.log,
+                                  pd.DataFrame(np.zeros((10000, len(self.log.columns))),
+                                               columns=self.log.columns)],
+                                 axis=0, ignore_index=True)
+            self.log.iloc[self.log_index, :] = np.array(values)
 
-    def save_log(self, file_name="simulation_results.csv"):
-        """ Save the current log file to disk. """
-        self.log.to_csv(os.path.join(self.data_dir, file_name))
+        self.log_index += 1
 
     def _sample_incident(self, t):
         """ Sample the next incident """
@@ -125,15 +170,19 @@ class Simulator():
         destination_coords = self.rsampler.location_coords[loc]
         return t, time, type_, loc, prio, req_vehicles, func, destination_coords
 
-    def _pick_vehicles(self, coordinates, vehicle_type):
+    def _pick_vehicle(self, location, vehicle_type):
         """ Dispatch a vehicle to coordinates. """
-        options = [self.vehicles[v] for v in self.vehicles.keys() if 
-                   self.vehicles[v].available and self.vehicles[v].type == vehicle_type]
+        candidates = [self.vehicles[v] for v in self.vehicles.keys() if
+                      self.vehicles[v].available and self.vehicles[v].type == vehicle_type]
 
-        vehicle_id = self.dispatcher.dispatch(coordinates, options)
+        vehicle_id, estimated_time = self.dispatcher.dispatch(location, candidates)
+
+        if vehicle_id == "EXTERNAL":
+            return None, None
+
         vehicle = self.vehicles[vehicle_id]
 
-        return vehicle
+        return vehicle, estimated_time
 
     def _update_vehicles(self, t):
         """ Return vehicles that finished a job to their bases. """
@@ -141,11 +190,16 @@ class Simulator():
             if not vehicle.is_available() and vehicle.becomes_available < t:
                 vehicle.return_to_base()
 
+    def save_log(self, file_name="simulation_results.csv"):
+        """ Save the current log file to disk. """
+        self.log = self.log.iloc[0:self.log_index, :].copy()
+        self.log.to_csv(os.path.join(self.data_dir, file_name), index=False)
+
     def save_simulator_state(self):
         import pickle
-        pickle.dump(self, os.path.join(self.data_dir, "simulator.pickle"))
+        pickle.dump(self, open(os.path.join(self.data_dir, "simulator.pickle"), "wb"))
 
-    def simulate_n_incidents(self, N):
+    def simulate_n_incidents(self, N, restart=True):
         """ Simulate N incidents and their reponses.
 
         Parameters
@@ -157,9 +211,12 @@ class Simulator():
         -------
         Float, the proportion of incidents that was served on time.
         """
+        if restart:
+            self._initialize_log(N)
+            t = 0
+        else:
+            t = self.log["t"].max()
 
-        self._initialize_log(N)
-        t = 0
         for _ in range(N):
             # sample incident and update status of vehicles at new time t
             t, time, type_, loc, prio, req_vehicles, func, dest = self._sample_incident(t)
@@ -167,13 +224,17 @@ class Simulator():
 
             for v in req_vehicles:
 
-                vehicle = self._pick_vehicles(dest, v)
+                vehicle, estimated_time = self._pick_vehicle(loc, v)
+                if vehicle is None:
+                    dispatch, turnout, travel, onscene, response = [np.nan]*5
+                    self._log([t, time, type_, loc, prio, func, v, "EXTERNAL", dispatch,
+                               turnout, travel, onscene, response, "EXTERNAL", "EXTERNAL"])
+                else:
+                    dispatch, turnout, travel, onscene, response = \
+                        self.rsampler.sample_response_time(type_, loc, vehicle.current_station,
+                                                           vehicle.type)
+                    vehicle.dispatch(dest, t + (onscene/60))
 
-                dispatch, turnout, travel, onscene, response = \
-                    self.rsampler.sample_response_time(type_, loc, vehicle.current_station,
-                                                       vehicle.type)
-                vehicle.dispatch(dest, t + (onscene/60))
-
-                self._log([t, time, type_, loc, prio, func, vehicle.type, vehicle.id,
-                           dispatch, turnout, travel, onscene, response,
-                           vehicle.current_station, vehicle.base_station])
+                    self._log([t, time, type_, loc, prio, func, vehicle.type, vehicle.id,
+                               dispatch, turnout, travel, onscene, response,
+                               vehicle.current_station, vehicle.base_station])
