@@ -20,6 +20,4 @@ def pre_process_station_name(x):
     Standarizes the station names. This step is necesary to merge
     different data sets later.
     """
-    x = x.upper()
-    x = x.split()
-    return x[0]
+    return x.upper()

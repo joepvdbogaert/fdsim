@@ -37,12 +37,12 @@ def prepare_data_for_response_time_analysis(incidents, deployments, stations, ve
                       left_on="hub_incident_id", right_on="dim_incident_id")
 
     # preprocess station name
-    merged['inzet_kazerne_naam'] = merged['inzet_kazerne_naam'].apply(
-        lambda x: pre_process_station_name(x))
+    merged['inzet_kazerne_groep'] = merged['inzet_kazerne_groep'].str.upper()
 
     # rename x, y coordinate columns to avoid confusion
     merged.rename({"st_x": "incident_xcoord", "st_y": "incident_ycoord"},
                   axis="columns", inplace=True)
+
     # add longitude, latitude coordinates as well
     merged[["incident_longitude", "incident_latitude"]] = \
         merged[["incident_xcoord", "incident_ycoord"]] \
@@ -55,20 +55,15 @@ def prepare_data_for_response_time_analysis(incidents, deployments, stations, ve
          lambda x: lonlat_to_xy(x["lon"], x["lat"]), axis=1)))]
 
     # preprocess station name in same way as for the deployments
-    stations["kazerne"] = stations["kazerne"].apply(
-        lambda x: pre_process_station_name(x))
+    stations["kazerne"] = stations["kazerne"].str.upper()
 
     # and rename to avoid confusion
     stations.rename({"lon": "station_longitude", "lat": "station_latitude"},
                     axis="columns", inplace=True)
 
     # create the merged dataset
-    df = pd.merge(merged, stations, left_on="inzet_kazerne_naam",
+    df = pd.merge(merged, stations, left_on="inzet_kazerne_groep",
                   right_on="kazerne", how="inner")
-
-    # filter on priority == 1 and volgnummer == 1
-    df = df[(df["dim_prioriteit_prio"] == 1) &
-            (df["inzet_terplaatse_volgnummer"] == 1)]
 
     # ensure data types
     df["inzet_rijtijd"] = df["inzet_rijtijd"].astype(float)
