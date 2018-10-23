@@ -19,7 +19,8 @@ from responsetimefitting import (
     get_coordinates_locations_stations,
     model_travel_time_per_vehicle,
     fit_dispatch_times,
-    fit_turnout_times
+    fit_turnout_times,
+    fit_onscene_times
 )
 
 from objects import DemandLocation, IncidentType
@@ -110,7 +111,7 @@ class ResponseTimeSampler():
 
         if self.verbose: print("Extracting coordinates of stations and demand locations...")
         self.location_coords, self.station_coords = \
-                    get_coordinates_locations_stations(self.data, location_col=location_col)
+            get_coordinates_locations_stations(self.data, location_col=location_col)
 
         if self.verbose: print('Fitting random variables on response time...')
         self.high_prio_data = self.data[(self.data["dim_prioriteit_prio"] == 1) &
@@ -118,6 +119,7 @@ class ResponseTimeSampler():
         self.dispatch_rv_dict = fit_dispatch_times(self.high_prio_data)
         self.turnout_time_rv_dict = fit_turnout_times(self.high_prio_data)
         self.travel_time_dict = model_travel_time_per_vehicle(self.high_prio_data)
+        self.onscene_time_rv_dict = fit_onscene_times(self.data)
 
         if self.verbose: print("Creating response time generators...")
         self._create_response_time_generators()
@@ -125,7 +127,8 @@ class ResponseTimeSampler():
         if self.verbose: print("Response time variables fitted.")
         self.fitted = True
 
-    def _prep_data_for_fitting(self, incidents, deployments, stations, vehicles, osrm_host, save):
+    def _prep_data_for_fitting(self, incidents, deployments, stations,
+                               vehicles, osrm_host, save):
         """ Perform basic preprocessing and calculate OSRM estimates for travel time.
 
         Parameters
@@ -195,37 +198,14 @@ class ResponseTimeSampler():
 
         self.travel_time_noise_generators = {}
         for vehicle_type, v_dict in self.travel_time_dict.items():
-            self.travel_time_noise_generators[vehicle_type] = time_generator(v_dict["noise_rv"])
+            rv = v_dict["noise_rv"]
+            self.travel_time_noise_generators[vehicle_type] = time_generator(rv)
 
-    def sample_dispatch_time(self, incident_type):
-        """ Sample a random dispatch time given the type of incident.
-
-        Parameters
-        ----------
-        incident_type: str
-            The type of the incident to sample dispatch time for.
-
-        Returns
-        -------
-        A float representing the random dispatch time in seconds.
-        """
-        return self.dispatch_rv_dict[incident_type].rvs()
-
-    def sample_turnout_time(self, incident_type, station_name):
-        """ Sample a random dispatch time given the type of incident.
-
-        Parameters
-        ----------
-        incident_type: str
-            The type of the incident to sample turn-out time for.
-        station_name: str
-            The name of the station that the deployment is executed from.
-
-        Returns
-        -------
-        A float representing the random turn-out time in seconds.
-        """
-        return self.turnout_time_rv_dict[station_name][incident_type].rvs()
+        self.onscene_generators = {}
+        for incident_type in self.onscene_time_rv_dict.keys():
+            self.onscene_generators[incident_type] = {}
+            for vehicle_type, rv in self.onscene_time_rv_dict[incident_type].items():
+                self.onscene_generators[incident_type][vehicle_type] = time_generator(rv)
 
     def sample_travel_time(self, estimated_time, vehicle,
                            osrm_host="http://192.168.56.101:5000"):
@@ -249,10 +229,6 @@ class ResponseTimeSampler():
 
         noise = next(self.travel_time_noise_generators[vehicle])
         return d["a"] + d["b"] * noise * estimated_time
-
-    def sample_on_scene_time(self, incident_type, vehicle_type):
-        """ Sample the duration that the vehicle is on-scene at the incident. """
-        return 30*60 # seconds
 
     def sample_response_time(self, incident_type, location_id, station_name, vehicle_type,
                              estimated_time=None, osrm_host="http://192.168.56.101:5000"):
@@ -284,7 +260,7 @@ class ResponseTimeSampler():
         dispatch = next(self.dispatch_generators[incident_type])
         turnout = next(self.turnout_generators[station_name][incident_type])
         travel = self.sample_travel_time(estimated_time, vehicle_type)
-        onscene = self.sample_on_scene_time(incident_type, vehicle_type)
+        onscene = next(self.onscene_generators[incident_type][vehicle_type])
         response = dispatch + turnout + travel
         return dispatch, turnout, travel, onscene, response
 

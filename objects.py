@@ -27,9 +27,6 @@ class Vehicle():
         self.coords = coords
         self.becomes_available = 0
 
-    def is_available(self):
-        return self.available
-
     def dispatch(self, coords, t_available):
         self.coords = coords
         self.available = False

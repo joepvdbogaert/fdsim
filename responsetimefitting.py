@@ -415,8 +415,9 @@ def fit_dispatch_times(data, rough_upper_bound=600):
     """
 
     # calculate dispatch times
-    data["dispatch_time"] = (pd.to_datetime(data["inzet_gealarmeerd_datumtijd"]) -
-                             pd.to_datetime(data["dim_incident_start_datumtijd"])).dt.seconds
+    data["dispatch_time"] = \
+        (pd.to_datetime(data["inzet_gealarmeerd_datumtijd"], dayfirst=True) -
+         pd.to_datetime(data["dim_incident_start_datumtijd"], dayfirst=True)).dt.seconds
 
     # filter out unrealistic values
     data = data[data["dispatch_time"] <= rough_upper_bound]
@@ -475,8 +476,8 @@ def fit_turnout_times(data, station_names=None, rough_upper_bound=600):
         station_names = data["inzet_kazerne_groep"].unique()
 
     # calculate dispatch times
-    data["turnout_time"] = (pd.to_datetime(data["inzet_uitgerukt_datumtijd"]) -
-                            pd.to_datetime(data["inzet_gealarmeerd_datumtijd"])
+    data["turnout_time"] = (pd.to_datetime(data["inzet_uitgerukt_datumtijd"], dayfirst=True) -
+                            pd.to_datetime(data["inzet_gealarmeerd_datumtijd"], dayfirst=True)
                             ).dt.seconds
 
     # filter out unrealistic values
@@ -498,7 +499,7 @@ def fit_turnout_times(data, station_names=None, rough_upper_bound=600):
         station_rv_dict = {}
 
         for type_ in types:
-            X = data[data["dim_incident_incident_type"] == type_]["turnout_time"]
+            X = dfstation[dfstation["dim_incident_incident_type"] == type_]["turnout_time"]
             if sample_size_sufficient(X):
                 station_rv_dict[type_] = fit_gamma_rv(X,
                                                       floc=np.min(X)-0.1,
@@ -507,6 +508,83 @@ def fit_turnout_times(data, station_names=None, rough_upper_bound=600):
                 station_rv_dict[type_] = copy.deepcopy(station_backup_rv)
 
         rv_dict[station] = station_rv_dict.copy()
+
+    return rv_dict
+
+
+def fit_onscene_times(data, vehicles=["TS", "HV", "RV", "WO"], rough_lower_bound=60,
+                      rough_upper_bound=24*60*60):
+    """ Fit a lognormal random variable to the dispatch time per
+        incident type.
+
+    Parameters
+    ----------
+    data: DataFrame
+        Merged log of deployments and incidents. All deployments in
+        the data will be used for fitting, so any filtering (e.g., on
+        priority or 'volgnummer') must be done in advance.
+    vehicles: array-like of strings
+        The vehicles to fit on-scene times for. Optional, defaults to
+        ["TS", "HV", "RV", "WO"].
+    rough_lower_bound: int
+        Number of seconds to use as a rough lower bound filter, on-scene
+        times below this value are considered unrealistic/unreliable and
+        are removed before fitting. Defaults to 60 seconds.
+    rough_upper_bound: int
+        Number of seconds to use as a rough upper bound filter, on-scene
+        times above this value are considered unrealistic/unreliable and
+        are removed before fitting. Defaults to 24*60*60 seconds (24 hours).
+
+    Returns
+    -------
+    A dictionary like
+    {'incident type' -> {'vehicle type' -> 'scipy.stats.gamma object'}}.
+    """
+    # filter vehicles
+    data = data[np.in1d(data["voertuig_groep"], vehicles)]
+
+    # calculate on-scene times
+    data["inzet_duration"] = \
+        (pd.to_datetime(data["inzet_eind_inzet_datumtijd"], dayfirst=True) -
+         pd.to_datetime(data["inzet_start_inzet_datumtijd"], dayfirst=True)).dt.seconds
+
+    # filter out unrealistically small and large values
+    data = data[(data["inzet_duration"] > rough_lower_bound) &
+                (data["inzet_duration"] < rough_upper_bound)]
+
+    # fit variables per incident type (use backup rv if not enough samples)
+    overall_backup_rv = fit_gamma_rv(data["inzet_duration"],
+                                     floc=np.min(data["inzet_duration"])-1,
+                                     scale=100)
+    types = data["dim_incident_incident_type"].unique()
+    rv_dict = {}
+
+    for type_ in types:
+
+        # backup random variable per station
+        df_type = data[data["dim_incident_incident_type"] == type_]
+
+        if sample_size_sufficient(df_type["inzet_duration"], max_mean_range=20*60,
+                                  max_std_range=20*60):
+            type_backup_rv = fit_gamma_rv(df_type["inzet_duration"],
+                                          floc=np.min(df_type["inzet_duration"]) - 1,
+                                          scale=100)
+        else:
+            type_backup_rv = copy.deepcopy(overall_backup_rv)
+
+        # create dict with entry for every type with vehicle-specific data
+        type_rv_dict = {}
+
+        for v in vehicles:
+            X = df_type[df_type["voertuig_groep"] == v]["inzet_duration"]
+            if sample_size_sufficient(X, max_mean_range=20*60, max_std_range=20*60):
+                type_rv_dict[v] = fit_gamma_rv(X,
+                                               floc=np.min(X) - 1,
+                                               scale=100)
+            else:
+                type_rv_dict[v] = copy.deepcopy(type_backup_rv)
+
+        rv_dict[type_] = type_rv_dict.copy()
 
     return rv_dict
 

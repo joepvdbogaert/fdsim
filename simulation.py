@@ -3,9 +3,8 @@ import numpy as np
 import pandas as pd
 
 from sampling import IncidentSampler, ResponseTimeSampler
-from objects import Vehicle, DemandLocation, IncidentType
+from objects import Vehicle
 from dispatching import ShortestDurationDispatcher
-from helpers import pre_process_station_name
 
 from definitions import ROOT_DIR
 
@@ -63,7 +62,7 @@ class Simulator():
     >>> sim = pickle.load(open('simulator.pickle', 'rb'))
     """
     def __init__(self, incidents, deployments, stations, vehicle_allocation,
-                 load_response_data=True, load_time_matrix=True, save_response_data=False, 
+                 load_response_data=True, load_time_matrix=True, save_response_data=False,
                  save_time_matrix=False, vehicle_types=["TS", "RV", "HV", "WO"],
                  predictor="prophet", start_time=None, end_time=None, data_dir="data",
                  osrm_host="http://192.168.56.101:5000", location_col="hub_vak_bk",
@@ -72,7 +71,8 @@ class Simulator():
         self.data_dir = os.path.join(ROOT_DIR, data_dir)
         self.verbose = verbose
 
-        self.rsampler = ResponseTimeSampler(load_data=load_response_data, data_dir=self.data_dir,
+        self.rsampler = ResponseTimeSampler(load_data=load_response_data,
+                                            data_dir=self.data_dir,
                                             verbose=verbose)
 
         self.rsampler.fit(incidents=incidents, deployments=deployments, stations=stations,
@@ -190,9 +190,11 @@ class Simulator():
                                turnout, travel, onscene, response, "EXTERNAL", "EXTERNAL"])
                 else:
                     dispatch, turnout, travel, onscene, response = \
-                        self.rsampler.sample_response_time(type_, loc, vehicle.current_station,
-                                                           vehicle.type, estimated_time=estimated_time)
-                    vehicle.dispatch(dest, t + (onscene/60))
+                        self.rsampler.sample_response_time(
+                            type_, loc, vehicle.current_station,
+                            vehicle.type, estimated_time=estimated_time)
+
+                    vehicle.dispatch(dest, t + (onscene/60) + (estimated_time/60))
 
                     self._log([t, time, type_, loc, prio, func, vehicle.type, vehicle.id,
                                dispatch, turnout, travel, onscene, response,
@@ -203,7 +205,7 @@ class Simulator():
 
     def _initialize_log(self, N):
         """ Create an empty log.
-        
+
         Initializes an empty self.log and self.log_index = 0. Nothing is returned.
 
         Parameters
@@ -219,10 +221,10 @@ class Simulator():
             size = 3*N
 
         self.log = np.empty((size, 15), dtype=object)
-        self.log_columns = ["t", "time", "incident_type", "location", "priority", "object_function",
-                            "vehicle_type", "vehicle_id", "dispatch_time", "turnout_time",
-                            "travel_time", "on_scene_time", "response_time", "station",
-                            "base_station_of_vehicle"]
+        self.log_columns = ["t", "time", "incident_type", "location", "priority",
+                            "object_function", "vehicle_type", "vehicle_id", "dispatch_time",
+                            "turnout_time", "travel_time", "on_scene_time", "response_time",
+                            "station", "base_station_of_vehicle"]
         self.log_index = 0
 
     def _log(self, values):
@@ -232,7 +234,9 @@ class Simulator():
         except IndexError:
             # if ran out of dataframe size, add rows and continue
             print("Log full at: {} entries, log extended.".format(self.log_index))
-            self.log = np.concatenate([self.log, np.empty(self.log.shape, dtype=object)], axis=0)
+            self.log = np.concatenate([self.log,
+                                       np.empty(self.log.shape, dtype=object)],
+                                      axis=0)
             self.log[self.log_index, :] = values
 
         self.log_index += 1
