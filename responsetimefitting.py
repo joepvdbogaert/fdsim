@@ -14,12 +14,15 @@ def prepare_data_for_response_time_analysis(incidents, deployments, stations, ve
 
     Parameters
     ----------
-    incidents: DataFrame
+    incidents: pd.DataFrame
         Contains the log of incidents.
-    deployments: DataFrame
+    deployments: pd.DataFrame
         Contains the log of deployments.
-    stations: DataFrame
+    stations: pd.DataFrame
         Contains information on the fire stations.
+    vehicles: array-like of strings
+        The vehicles to keep in the resulting data. Must correspond to entries in
+        the 'voertuig_groep' column in 'incidents'.
 
     Returns
     -------
@@ -91,6 +94,8 @@ def get_osrm_distance_and_duration(longlat_origin, longlat_destination,
         (in that order).
     longlat_destination: tuple(float, float)
         coordinates of the destination in decimal longitude and latitude.
+    osrm_host: str
+        The URL to the OSRM API.
 
     Returns
     -------
@@ -111,20 +116,19 @@ def add_osrm_distance_and_duration(df, osrm_host="http://192.168.56.101:5000"):
     Parameters
     ----------
     df: DataFrame
-        merged data of incidents and deployments. Must contain the
+        The merged data of incidents and deployments. Must contain the
         following columns: {station_longitude, station_latitude,
         incident_longitude, incident_latitude}.If not present, call
         'prepare_data_for_response_time_analysis' first.
     osrm_host: str
-        url to the OSRM API, defaults to 'http://192.168.56.101:5000', which is the
+        The URL to the OSRM API, defaults to 'http://192.168.56.101:5000', which is the
         default if running OSRM locally.
 
     Returns
     -------
-    the DataFrame with two added columns 'osrm_distance' (meters) and 'osrm_duration'
+    The DataFrame with two added columns 'osrm_distance' (meters) and 'osrm_duration'
     (seconds).
     """
-
     osrm.RequestConfig.host = osrm_host
     df[["osrm_distance", "osrm_duration"]] = \
         df.apply(lambda x: get_osrm_distance_and_duration(
@@ -141,15 +145,18 @@ def fit_simple_linear_regression(data, xcol, ycol, fit_intercept=False):
     Parameters
     ----------
     data: DataFrame
-        the data to fit a model on.
+        The data to fit a model on.
     xcol: str
-        the name of the column that acts as a predictor.
+        The name of the column that acts as a predictor.
     ycol: str
-        the name of the column acting as the dependent variable.
+        The name of the column acting as the dependent variable.
+    fit_intercept: boolean
+        If true, also fits the intercept. If false, forces intercept
+        of the resulting model to 0. NOTE: Defaults to false.
 
     Returns
     -------
-    parameters of fitter model, i.e., a tuple of (intercept, coefficient)
+    Parameters of fitted model, i.e., a tuple of (intercept, coefficient)
     """
     lm = linear_model.LinearRegression(fit_intercept=fit_intercept)
     lm.fit(data[xcol].values.reshape(-1, 1), data[ycol])
@@ -198,13 +205,13 @@ def safe_bayes_mvs(x, alpha=0.9):
     Parameters
     ----------
     x: array-like
-        the data to compute confidence intervals over
+        The data to compute confidence intervals over
     alpha: float
-        the confidence level, defaults to 0.9 (90% confidence)
+        The confidence level, defaults to 0.9 (90% confidence)
 
     Returns
     -------
-    tuple of (lower bound mean, upper bound mean,
+    Tuple of (lower bound mean, upper bound mean,
     lower bound std, upper bound std).
     """
     if len(x) > 1:
@@ -225,7 +232,9 @@ def sample_size_sufficient(x, alpha=0.95, max_mean_range=30, max_std_range=25):
     Parameters
     ----------
     x: array-like
-        the data to evaluate
+        The data to evaluate.
+    alpha: float in range (0,1)
+        The confidence level, defaults to 0.95 (95%).
     max_mean_range: float or int
         the maximum range of the confidence interval for the mean
         to classify the sample size as sufficient.
@@ -249,14 +258,6 @@ def robust_remove_travel_time_outliers(data):
     """ Remove outliers in travel time in a robust way by looking at
         the 50% most reliable data points.
 
-    Parameters
-    ----------
-    data: DataFrame
-        The data to remove outliers from. Assumes the columns 'osrm_distance'
-        and 'inzet_rijtijd' to be present.
-
-    notes
-    -----
     Performs two one-way outlier detection methods. It determines tresholds
     average speed and on time per distance unit (the inverse of speed) and
     cuts the values falling off on the high side. Tresholds are computed as
@@ -267,6 +268,12 @@ def robust_remove_travel_time_outliers(data):
     Thus only data points between the 25% and 75% quantiles are used, which
     are likely to be reliable points. This makes the method robust against
     unreliable data.
+
+    Parameters
+    ----------
+    data: DataFrame
+        The data to remove outliers from. Assumes the columns 'osrm_distance'
+        and 'inzet_rijtijd' to be present.
 
     Returns
     -------
@@ -322,7 +329,7 @@ def model_travel_time(data):
     Parameters
     ----------
     data: DataFrame
-        Output of 'prepare_data_for_response_time_analysis'.s
+        Output of 'prepare_data_for_response_time_analysis'.
 
     Returns
     -------

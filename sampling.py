@@ -77,6 +77,8 @@ class ResponseTimeSampler():
         stations: pd.DataFrame (optional)
             The station information including coordinates and station names.
             Only required when no prepared data is loaded.
+        vehicle_types: array-like of strings
+            The types of vehicles to use. Defaults to ["TS", "RV", "HV", "WO"].
         osrm_host: str
             The url to the OSRM API, required when object is initialized with
             load_data=False or when no prepared data was found.
@@ -131,6 +133,8 @@ class ResponseTimeSampler():
                                vehicles, osrm_host, save):
         """ Perform basic preprocessing and calculate OSRM estimates for travel time.
 
+        Prepared data is stored under self.data. Nothing is returned.
+
         Parameters
         ----------
         incidents: pd.DataFrame
@@ -139,6 +143,12 @@ class ResponseTimeSampler():
             The deployment data.
         stations: pd.DataFrame
             The station information including coordinates and station names.
+        vehicles: array-like of strings
+            The types of vehicles to use. Defaults to ["TS", "RV", "HV", "WO"].
+        osrm_host: str
+            The url to the OSRM API.
+        save: boolean
+            Whether to save the data to a csv file after preparing it.
         """
         if self.verbose: print("Preprocessing and merging datasets...")
         data = prepare_data_for_response_time_analysis(incidents, deployments,
@@ -163,6 +173,7 @@ class ResponseTimeSampler():
             of the objects data.
         location_col: str
             Name of the column to use as a location identifier for incidents.
+            Optional, defaults to "hub_vak_bk".
         """
         assert self.fitted, "You fist have to 'fit()' before setting custom stations."
         self.station_coords = dict()
@@ -173,7 +184,27 @@ class ResponseTimeSampler():
         if self.verbose: print("Custom station locations set.")
 
     def _create_response_time_generators(self):
-        """ Create generator objects for every element of response time. """
+        """ Create generator objects for every element of response time.
+
+        Sampling efficiency suffers from a high number of calls to '.rvs()' of a
+        scipy.stats frozen distribution object. Hence, we avoid calling it many times
+        by using generators that call the function once every 10,000 samples.
+
+        This function creates dictionaries of the same architecture as the dictionaries
+        holding the random variables, but intead of random variables, it stores generators
+        as lowest level elements.
+
+        Example
+        -------
+        >>> sampler = ResponseTimeSampler(args)
+        >>> # sample next dispatch time for a 'Binnenbrand'
+        >>> next(sampler.dispatch_generators["Binnenbrand"])
+
+        Notes
+        -----
+        It is not useful to call this function manually, it is called upon initialization
+        of the ResponseTimeSampler.
+        """
         def time_generator(rv):
             """ A generator of random samples according to RV (random variable). """
             a = rv.rvs(10000)
@@ -244,12 +275,18 @@ class ResponseTimeSampler():
             The name of the station that the deployment is executed from.
         vehicle_type: str
             The vehicle type (code) to sample travel time for.
+        estimated_time: float, int
+            The estimated travel time according to OSRM. Optional, defaults
+            to None. If None, estimation is collected from OSRM at time of
+            calling, which is far less efficient.
+        osrm_host: str
+            The URL to the OSRM API. Required when no 'estimated_time' is provided.
 
         Returns
         -------
         Tuple of (dispatch time, turn-out time, travel time, on-scene time,
         total response time). Note that the first three elements add up to the total response
-        time. Those are returned separately to enable storing detailed sampling results.
+        time. Those are returned separately to allow detailed sampling results to be stored.
         """
         orig = self.station_coords[station_name]
         dest = self.location_coords[location_id]
@@ -327,13 +364,36 @@ class IncidentSampler():
                 if str(v) not in ["nan", "NVT"]]
 
     def _set_sampling_dict(self, start_time, end_time, incident_types):
-        """ Get the dictionary required for sampling from the predictor. """
+        """ Get the dictionary required for sampling from the predictor.
+
+        Gets the sampling dictionary of a Predictor and stores it to the
+        IncidentSampler object so that it can be used in sampling. Also
+        stores the length of the dictionary as self.T. This is used during
+        simulation to loop over the sampling dictionary while avoiding
+        IndexErrors.
+
+        Parameters
+        ----------
+        start_time: timestamp, str convertible to timestamp
+            The start date and time of the period to simulate.
+        end_time: timestamp, str convertible to timestamp
+            The start date and time of the period to simulate.
+        incident_types: array-like of strings
+            The incident types to incorporate in the simulation.
+        """
         self.sampling_dict = self.predictor.create_sampling_dict(start_time, end_time,
                                                                  incident_types)
         self.T = len(self.sampling_dict)
 
     def _assign_predictor(self, predictor):
-        """ Initialize incident rate predictor and assign to property. """
+        """ Initialize incident rate predictor and assign to property.
+
+        Parameters
+        ----------
+        predictor: str, one of ['prophet']
+            The predictor to use to forecast the incident rates. Currently,
+            only supports predictor='prophet'.
+        """
         if predictor == "prophet":
             if self.verbose: print("Initializing incident rate predictor...")
             self.predictor = ProphetIncidentPredictor(load_forecast=True, verbose=True)
@@ -341,7 +401,12 @@ class IncidentSampler():
             raise ValueError("Currently, only predictor='prophet' is supported.")
 
     def _create_incident_types(self):
-        """ Initialize incident types with their characteristics. """
+        """ Initialize incident types with their characteristics.
+
+        Creates a dictionary of IncidentType objects. Every such object holds
+        type-specific distributions about priority, required vehicles,
+        and demand locations.
+        """
         if self.verbose: print("Getting priority probabilities..")
         prio_probs = get_prio_probabilities_per_type(self.incidents)
 
@@ -358,7 +423,11 @@ class IncidentSampler():
                                location_probs[t]) for t in self.types}
 
     def _create_demand_locations(self):
-        """ Initialize demand locations and their building function distributions. """
+        """ Initialize demand locations and their building function distributions.
+
+        Creates a dictionary of DemandLocation objects. Each such object has its
+        own distribution over building functions that is used during sampling.
+        """
         if self.verbose: print("Getting building function probabilities...")
         building_probs = get_building_function_probabilities(self.incidents)
 

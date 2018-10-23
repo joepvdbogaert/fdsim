@@ -70,7 +70,7 @@ class ProphetIncidentPredictor(BaseIncidentPredictor):
     load_forecast: boolean
         Whether to load a pre-existing forecast from disk.
         Defaults to True, since recomputing forecasts is costly.
-    fd_dir: str
+    fc_dir: str
         The directory in which forecasts should be saved and
         from which they should be loaded if applicable. Defaults
         to './data/forecasts/'.
@@ -172,7 +172,10 @@ class ProphetIncidentPredictor(BaseIncidentPredictor):
         periods: int
             The number of periods to forecast.
         freq: str,
-            Any valid frequency for pd.date_range, such as 'H', 'D', or 'M'.
+            The frequency to predict the incident rates at. Accepts any valid frequency
+            for pd.date_range, such as 'H' (default), 'D', or 'M'.
+        save: boolean
+            Whether to save the forecast to a csv file. Optional, defaults to false.
         """
         assert self.fitted, \
             "First use 'fit()' to fit a model before predicting."
@@ -277,6 +280,9 @@ class ProphetIncidentPredictor(BaseIncidentPredictor):
             The earliest time that should be included in the dictionary.
         end_time: Timestamp or str convertible to Timestamp
             The latest time that should be included in the dictionary.
+        incident_types: array-like of strings
+            The incident types to forecast for. Defaults to None. If None,
+            uses all incident types in the forecast.
 
         Returns
         -------

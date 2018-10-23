@@ -7,7 +7,12 @@ from abc import abstractmethod, ABCMeta
 
 
 class BaseDispatcher(object):
-    """ Base class for dispatchers. Not useful to instantiate on its own. """
+    """ Base class for dispatchers. Not useful to instantiate on its own.
+
+    All classes that inherit form BasePredictor should implement 'dispatch()' to
+    choose from a list of Vehicle objects, which one to dispatch to a specified
+    location.
+    """
     __metaclass__ = ABCMeta
 
     def __init__(self):
@@ -31,7 +36,30 @@ class BaseDispatcher(object):
 
 class ShortestDurationDispatcher(BaseDispatcher):
     """ Dispatcher that dispatches the vehicle with the shortest travel time
-        estimated by the Open Source Routing Machine. """
+        estimated by the Open Source Routing Machine (OSRM).
+
+    Parameters
+    ----------
+    demand_locs: dict
+        The coordinates of demand locations, as a dictionary like:
+        {'demand location id' -> (longitude, latitude)}.
+        Ignored when load_matrix=True.
+    station_locs: dict
+        The coordinates of the fire stations. Same form as demand_locs.
+        Ignored when load_matrix=True.
+    osrm_host: str
+        The URL to the OSRM API. Ignored when load_matrix=True.
+    load_matrix: boolean
+        Whether to load the matrix of travel times from disk instead of
+        computing it with OSRM. Defaults to True.
+    save_matrix: boolean
+        Whether to save the computed time matrix to disk after computing it
+        with OSRM. Optional, defaults to false.
+    data_dir: str
+        The directory to store the time matrix and/or load it from.
+    verbose: boolean
+        Whether to print progress to console.
+    """
 
     def __init__(self, demand_locs=None, station_locs=None,
                  osrm_host="http://192.168.56.101:5000", load_matrix=True,
