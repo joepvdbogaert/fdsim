@@ -119,6 +119,9 @@ class ResponseTimeSampler():
         self.turnout_time_rv_dict = fit_turnout_times(self.high_prio_data)
         self.travel_time_dict = model_travel_time_per_vehicle(self.high_prio_data)
 
+        if self.verbose: print("Creating response time generators...")
+        self._create_response_time_generators()
+
         if self.verbose: print("Response time variables fitted.")
         self.fitted = True
 
@@ -165,6 +168,34 @@ class ResponseTimeSampler():
                 self.location_coords[station_locations[i]].copy()
 
         if self.verbose: print("Custom station locations set.")
+
+    def _create_response_time_generators(self):
+        """ Create generator objects for every element of response time. """
+        def time_generator(rv):
+            """ A generator of random samples according to RV (random variable). """
+            a = rv.rvs(10000)
+            counter = 0
+            while True:
+                try:
+                    yield a[counter]
+                    counter += 1
+                except IndexError:
+                    counter = 0
+                    a = rv.rvs(10000)
+
+        self.dispatch_generators = {}
+        for incident_type, rv in self.dispatch_rv_dict.items():
+            self.dispatch_generators[incident_type] = time_generator(rv)
+
+        self.turnout_generators = {}
+        for station in self.turnout_time_rv_dict.keys():
+            self.turnout_generators[station] = {}
+            for incident_type, rv in self.turnout_time_rv_dict[station].items():
+                self.turnout_generators[station][incident_type] = time_generator(rv)
+
+        self.travel_time_noise_generators = {}
+        for vehicle_type, v_dict in self.travel_time_dict.items():
+            self.travel_time_noise_generators[vehicle_type] = time_generator(v_dict["noise_rv"])
 
     def sample_dispatch_time(self, incident_type):
         """ Sample a random dispatch time given the type of incident.
@@ -216,7 +247,7 @@ class ResponseTimeSampler():
         except KeyError:
             d = self.travel_time_dict["overall"]
 
-        noise = d["noise_rv"].rvs()
+        noise = next(self.travel_time_noise_generators[vehicle])
         return d["a"] + d["b"] * noise * estimated_time
 
     def sample_on_scene_time(self, incident_type, vehicle_type):
@@ -250,12 +281,11 @@ class ResponseTimeSampler():
         if estimated_time is None:
             _, estimated_time = get_osrm_distance_and_duration(orig, dest, osrm_host=osrm_host)
 
-        dispatch = self.sample_dispatch_time(incident_type)
-        turnout = self.sample_turnout_time(incident_type, station_name)
+        dispatch = next(self.dispatch_generators[incident_type])
+        turnout = next(self.turnout_generators[station_name][incident_type])
         travel = self.sample_travel_time(estimated_time, vehicle_type)
         onscene = self.sample_on_scene_time(incident_type, vehicle_type)
         response = dispatch + turnout + travel
-
         return dispatch, turnout, travel, onscene, response
 
 
