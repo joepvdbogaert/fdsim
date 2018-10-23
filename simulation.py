@@ -23,7 +23,17 @@ class Simulator():
     vehicle_allocation: pd.DataFrame
         The allocation of vehicles to stations. Expected columns:
         ["kazerne", "#TS", "#RV", "#HV", "#WO"].
-    vehicles: array-like of strings
+    load_response_data: boolean
+        Whether to load preprocessed response data from disk (True) or to
+        calculate it using OSRM.
+    load_time_matrix: boolean
+        Whether to load the matrix of travel durations from disk (True) or
+        to calculate it using OSRM.
+    save_response_data: boolean
+        Whether to save the prepared response data with OSRM estimates to disk.
+    save_time_matrix: boolean
+        Whether to save the matrix of travel durations to disk.
+    vehicle_types: array-like of strings
         The vehicle types to incorporate in the simulation. Optional, defaults
         to ["TS", "RV", "HV", "WO"].
     predictor: str
@@ -42,7 +52,8 @@ class Simulator():
     osrm_host: str
         URL to the OSRM API, defaults to 'http://192.168.56.101:5000'
     location_col: str
-        The name of the column that identifies the demand locations, defaults to 'hub_vak_bk'.
+        The name of the column that identifies the demand locations, defaults to
+        'hub_vak_bk'. This is also the only currently supported value.
     verbose: boolean
         Whether to print progress updates to the console during computations.
 
@@ -103,7 +114,19 @@ class Simulator():
         if self.verbose: print("Simulator is ready. At your service.")
 
     def _create_vehicle_dict(self, vehicle_allocation):
-        """ Create a dictionary of Vehicle objects from the station data. """
+        """ Create a dictionary of Vehicle objects from the station data.
+
+        Parameters
+        ----------
+        vehicle_allocation: pd.DataFrame
+            The allocation of vehicles to stations. Column names should represent
+            vehicle types, row names station names, and values are the number of
+            vehicles assigned to the station.
+
+        Returns
+        -------
+        A dictionary like: {'vehicle id' -> Vehicle object}.
+        """
         vehicle_allocation["kazerne"] = vehicle_allocation["kazerne"].str.upper()
         vehicle_allocation.rename(columns={"#WO": "WO", "#TS": "TS", "#RV": "RV", "#HV": "HV"},
                                   inplace=True)
@@ -121,21 +144,53 @@ class Simulator():
         return vdict
 
     def _get_coordinates(self, demand_location):
-        """ Get the coordinates of a demand location """
+        """ Get the coordinates of a demand location.
+
+        Parameters
+        ----------
+        demand_location: str
+            The ID of the demand location to get the coordinates of.
+        """
         return self.rsampler.locations_coords[demand_location]
 
     def _get_station_coordinates(self, station_name):
-        """ Get the coordinates of a statio. """
+        """ Get the coordinates of a fire station.
+
+        Parameters
+        ----------
+        station_name: str
+            The name of station to get the coordinates of.
+        """
         return self.rsampler.station_coords[station_name]
 
     def _sample_incident(self, t):
-        """ Sample the next incident """
+        """ Sample the next incident.
+
+        Parameters
+        ----------
+        t: float
+            The time in minutes since the simulation start. From t, the exact timestamp is
+            determined, which leads to certain incident rates for different incident types.
+        """
         t, time, type_, loc, prio, req_vehicles, func = self.isampler.sample_next_incident(t)
         destination_coords = self.rsampler.location_coords[loc]
         return t, time, type_, loc, prio, req_vehicles, func, destination_coords
 
     def _pick_vehicle(self, location, vehicle_type):
-        """ Dispatch a vehicle to coordinates. """
+        """ Dispatch a vehicle to coordinates.
+
+        Parameters
+        ----------
+        location: str
+            The ID of the demand location where a vehicle should be dispatched to.
+        vehicle_type: str
+            The type of vehicle to send to the incident.
+
+        Returns
+        -------
+        The Vehicle object of the chosen vehicle and the estimated travel time to
+        the incident / demand location in seconds.
+        """
         candidates = [self.vehicles[v] for v in self.vehicles.keys() if
                       self.vehicles[v].available and self.vehicles[v].type == vehicle_type]
 
@@ -149,13 +204,20 @@ class Simulator():
         return vehicle, estimated_time
 
     def _update_vehicles(self, t):
-        """ Return vehicles that finished a job to their bases. """
+        """ Return vehicles that finished their jobs to their base stations.
+
+        Parameters
+        ----------
+        t: float
+            The time since the start of the simulation. Determines which vehicles
+            have become available again and can return to their bases.
+        """
         for vehicle in self.vehicles.values():
             if not vehicle.available and vehicle.becomes_available < t:
                 vehicle.return_to_base()
 
     def _prepare_results(self):
-        """ Create pd.DataFrame of logged results. """
+        """ Create pd.DataFrame with descriptive column names of logged results."""
         self.results = pd.DataFrame(self.log[0:self.log_index, :], columns=self.log_columns)
 
     def simulate_n_incidents(self, N, restart=True):
@@ -165,10 +227,9 @@ class Simulator():
         ----------
         N: int
             The number of incidents to simulate.
-
-        Returns
-        -------
-        Float, the proportion of incidents that was served on time.
+        restart: boolean
+            Whether to empty the log and reset time before simulation (True)
+            or to continue where stopped (False). Optional, defaults to True.
         """
         if restart:
             self._initialize_log(N)
@@ -206,7 +267,11 @@ class Simulator():
     def _initialize_log(self, N):
         """ Create an empty log.
 
-        Initializes an empty self.log and self.log_index = 0. Nothing is returned.
+        Initializes an empty self.log and self.log_index = 0. Nothing is returned. Log is
+        initialized of certain size to avoid slow append / concatenate operations.
+        Creates an 3*N size log because incidents can have multiple log entries,
+        unless 3*N > one million, then initialize of size one-million and extend
+        on the fly when needed to avoid ennecessary memory issues.
 
         Parameters
         ----------
@@ -228,11 +293,21 @@ class Simulator():
         self.log_index = 0
 
     def _log(self, values):
-        """ Insert values in the log. """
+        """ Insert values in the log.
+
+        When log is 'full', the log size is doubled by concatenating an empty array of the
+        same shape. This ensures that only few concatenate operations are required (this is
+        desirable because they are relatively slow).
+
+        Parameters
+        ----------
+        values: array-like
+            Must contain the values in the specific order as specified in 'self.log_columns'.
+        """
         try:
             self.log[self.log_index, :] = values
         except IndexError:
-            # if ran out of dataframe size, add rows and continue
+            # if ran out of array size, add rows and continue
             print("Log full at: {} entries, log extended.".format(self.log_index))
             self.log = np.concatenate([self.log,
                                        np.empty(self.log.shape, dtype=object)],
@@ -242,10 +317,39 @@ class Simulator():
         self.log_index += 1
 
     def save_log(self, file_name="simulation_results.csv"):
-        """ Save the current log file to disk. """
+        """ Save the current log file to disk.
+
+        Notes
+        -----
+        File gets saved in the folder 'data_dir' that is specified on
+        initialization of the Simulator.
+
+        Parameters
+        ----------
+        file_name: str
+            How to name the csv of the log.
+        """
         self.results.to_csv(os.path.join(self.data_dir, file_name), index=False)
 
     def save_simulator_object(self):
-        """ Save the Simulator instance as a pickle for quick loading. """
-        import pickle
-        pickle.dump(self, open(os.path.join(self.data_dir, "simulator.pickle"), "wb"))
+        """ Save the Simulator instance as a pickle for quick loading.
+
+        Saves the entire Simulator object as a pickle, so that it can be quickly loaded
+        with all preprocessed attributes. Note: generator objects are not supported by
+        pickle, so they have to be removed before dumping and re-initialized after
+        loading.
+
+        Notes
+        -----
+        Requires the pickle package to be installed.
+        """
+        try:
+            import pickle
+            del self.rsampler.dispatch_generators
+            del self.rsampler.turnout_generators
+            del self.rsampler.travel_time_noise_generators
+            del self.rsampler.onscene_generators
+            pickle.dump(self, open(os.path.join(self.data_dir, "simulator.pickle"), "wb"))
+        except ImportError:
+            print("This method requires the pickle package, which is not installed. Install"
+                  " with 'pip install pickle' or 'conda install pickle'.")
