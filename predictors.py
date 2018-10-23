@@ -283,7 +283,7 @@ class ProphetIncidentPredictor(BaseIncidentPredictor):
         The sampling dictionary as described above.
         """
         assert self.forecast is not None, \
-            ("No forecast available, instantiate with load_forecast=True "
+            ("No forecast available, initiate with load_forecast=True "
              "or use .fit() and .predict() to create one.")
 
         if incident_types is not None:
@@ -291,7 +291,7 @@ class ProphetIncidentPredictor(BaseIncidentPredictor):
         else:
             fc = self.forecast.copy()
 
-        fc["ds"] = pd.to_datetime(fc["ds"])
+        fc["ds"] = pd.to_datetime(fc["ds"], dayfirst=True)
         if start_time is None:
             start_time = fc["ds"].min()
         if end_time is None:

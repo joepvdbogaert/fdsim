@@ -293,10 +293,11 @@ class IncidentSampler():
     >>>           .format(t, type_, loc, prio, vehicles, func))
     """
 
-    def __init__(self, incidents, deployments, vehicle_types, start_time=None, end_time=None,
-                 predictor="prophet", verbose=True):
+    def __init__(self, incidents, deployments, vehicle_types, locations, start_time=None,
+                 end_time=None, predictor="prophet", verbose=True):
         """ Initialize all properties by extracting probabilities from the data. """
-        self.incidents = incidents
+        self.incidents = incidents[
+                np.in1d(incidents["hub_vak_bk"].fillna(0).astype(int).astype(str), locations)]
         self.deployments = deployments
         self.vehicle_types = vehicle_types
         self.verbose = verbose

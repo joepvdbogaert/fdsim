@@ -91,7 +91,7 @@ def get_vehicle_requirements_probabilities(incidents, deployments, vehicles):
     -------
     Nested dictionary like {"incident type": {"vehicles": prob}}.
     """
-    deployments = deployments[np.isin(deployments["voertuig_groep"],vehicles)]
+    deployments = deployments[np.isin(deployments["voertuig_groep"], vehicles)]
     # add incident type to the deployment data
     deployments = deployments.merge(
         incidents[["dim_incident_id", "dim_incident_incident_type"]],

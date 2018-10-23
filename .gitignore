@@ -105,4 +105,11 @@ venv.bak/
 
 # notebooks folder
 notebooks/
+
+# data
+data/
+*.csv
+*.json
+*.xlsx
+*.geojson
 *.ipynb
