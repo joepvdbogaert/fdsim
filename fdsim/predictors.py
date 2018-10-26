@@ -6,8 +6,6 @@ import numpy as np
 import pandas as pd
 from fbprophet import Prophet
 
-from definitions import ROOT_DIR
-
 
 class BaseIncidentPredictor(object):
     """ Base class for incident predictors. Not useful to instantiate
@@ -59,7 +57,7 @@ class ProphetIncidentPredictor(BaseIncidentPredictor):
 
     Example
     -------
-    >>> predictor = IncidentPredictor(load_forecast=False)
+    >>> predictor = ProphetIncidentPredictor(load_forecast=False)
     >>> predictor.fit(incident_data)
     >>> predictor.predict(periods=365*24, freq="H", save=True)
     >>> forecast = predictor.get_forecast()
@@ -86,7 +84,7 @@ class ProphetIncidentPredictor(BaseIncidentPredictor):
         self.verbose = verbose
         self.fitted = False
         self.file_name = "prophet_forecast.csv"
-        self.fc_dir = os.path.join(ROOT_DIR, fc_dir)
+        self.fc_dir = fc_dir
         self.forecast = None
         self.sampling_dict = None
 

@@ -3,16 +3,16 @@ import pandas as pd
 import numpy as np
 import warnings
 
-from incidentfitting import (
+from fdsim.incidentfitting import (
     get_prio_probabilities_per_type,
     get_vehicle_requirements_probabilities,
     get_spatial_distribution_per_type,
     get_building_function_probabilities
 )
 
-from predictors import ProphetIncidentPredictor
+from fdsim.predictors import ProphetIncidentPredictor
 
-from responsetimefitting import (
+from fdsim.responsetimefitting import (
     prepare_data_for_response_time_analysis,
     get_osrm_distance_and_duration,
     add_osrm_distance_and_duration,
@@ -23,8 +23,7 @@ from responsetimefitting import (
     fit_onscene_times
 )
 
-from objects import DemandLocation, IncidentType
-from definitions import ROOT_DIR
+from fdsim.objects import DemandLocation, IncidentType
 
 
 class ResponseTimeSampler():
@@ -41,19 +40,19 @@ class ResponseTimeSampler():
         Whether to print progress updates when doing stuff.
     """
 
-    def __init__(self, load_data=True, data_dir="data/responsetimes",
+    def __init__(self, load_data=True, data_dir="/data",
                  verbose=True):
         """ Initialize variables. """
         self.fitted = False
         self.data = None
         self.file_name = "response_data.csv"
-        self.data_dir = os.path.join(ROOT_DIR, data_dir)
+        self.data_dir = data_dir
         self.verbose = verbose
 
         if load_data:
             try:
                 self.data = pd.read_csv(os.path.join(self.data_dir, self.file_name),
-                                        dtype={"hub_vak_bk": int})
+                                        dtype={"hub_vak_bk": int}, low_memory=False)
                 self.data["hub_vak_bk"] = self.data["hub_vak_bk"].astype(str)
             except FileNotFoundError:
                 warnings.warn("No prepared data found, check if 'data_dir' specifies"
@@ -116,8 +115,9 @@ class ResponseTimeSampler():
             get_coordinates_locations_stations(self.data, location_col=location_col)
 
         if self.verbose: print('Fitting random variables on response time...')
-        self.high_prio_data = self.data[(self.data["dim_prioriteit_prio"] == 1) &
+        self.high_prio_data = (self.data[(self.data["dim_prioriteit_prio"] == 1) &
                                         (self.data["inzet_terplaatse_volgnummer"] == 1)]
+                                        .copy())
         self.dispatch_rv_dict = fit_dispatch_times(self.high_prio_data)
         self.turnout_time_rv_dict = fit_turnout_times(self.high_prio_data)
         self.travel_time_dict = model_travel_time_per_vehicle(self.high_prio_data)
@@ -163,7 +163,8 @@ class ResponseTimeSampler():
 
         if self.verbose: print("Data prepared for fitting.")
 
-    def set_custom_stations(self, station_locations, location_col="hub_vak_bk"):
+    def set_custom_stations(self, station_locations, station_names,
+                            location_col="hub_vak_bk"):
         """ Change the locations of stations to custom demand locations.
 
         Parameters
@@ -171,17 +172,26 @@ class ResponseTimeSampler():
         station_locations: array-like of strings
             Location IDs of the custom stations, must match values in location_col
             of the objects data.
-        location_col: str
+        location_col: str, optional
             Name of the column to use as a location identifier for incidents.
-            Optional, defaults to "hub_vak_bk".
+            Defaults to "hub_vak_bk".
         """
         assert self.fitted, "You fist have to 'fit()' before setting custom stations."
+        assert len(station_locations) == len(station_names), ("Lengths of station_locations"
+            " and station_names does not match")
+
+        # set station coordinates
         self.station_coords = dict()
         for i in range(len(station_locations)):
-            self.station_coords["STATION " + str(i)] = \
-                self.location_coords[station_locations[i]].copy()
+            self.station_coords[station_names[i]] = \
+                self.location_coords[station_locations[i]]
 
-        if self.verbose: print("Custom station locations set.")
+        # set turnout times (since these were station-dependent)
+        overall_turnout_dict = fit_turnout_times(self.high_prio_data, types_only=True)
+        self.turnout_time_rv_dict = {}
+        for station in station_names:
+            self.turnout_time_rv_dict[station] = overall_turnout_dict
+        self._create_response_time_generators()
 
     def _create_response_time_generators(self):
         """ Create generator objects for every element of response time.
@@ -275,11 +285,11 @@ class ResponseTimeSampler():
             The name of the station that the deployment is executed from.
         vehicle_type: str
             The vehicle type (code) to sample travel time for.
-        estimated_time: float, int
+        estimated_time: float, int, optional
             The estimated travel time according to OSRM. Optional, defaults
             to None. If None, estimation is collected from OSRM at time of
             calling, which is far less efficient.
-        osrm_host: str
+        osrm_host: str, optional
             The URL to the OSRM API. Required when no 'estimated_time' is provided.
 
         Returns
@@ -288,10 +298,9 @@ class ResponseTimeSampler():
         total response time). Note that the first three elements add up to the total response
         time. Those are returned separately to allow detailed sampling results to be stored.
         """
-        orig = self.station_coords[station_name]
-        dest = self.location_coords[location_id]
-
         if estimated_time is None:
+            orig = self.station_coords[station_name]
+            dest = self.location_coords[location_id]
             _, estimated_time = get_osrm_distance_and_duration(orig, dest, osrm_host=osrm_host)
 
         dispatch = next(self.dispatch_generators[incident_type])
@@ -337,7 +346,7 @@ class IncidentSampler():
     """
 
     def __init__(self, incidents, deployments, vehicle_types, locations, start_time=None,
-                 end_time=None, predictor="prophet", verbose=True):
+                 end_time=None, predictor="prophet", fc_dir="/data", verbose=True):
         """ Initialize all properties by extracting probabilities from the data. """
         self.incidents = incidents[
                 np.in1d(incidents["hub_vak_bk"].fillna(0).astype(int).astype(str), locations)]
@@ -347,7 +356,7 @@ class IncidentSampler():
 
         self.types = self._infer_incident_types()
 
-        self._assign_predictor(predictor)
+        self._assign_predictor(predictor, fc_dir)
         self._set_sampling_dict(start_time, end_time, incident_types=self.types)
         self._create_incident_types()
         self._create_demand_locations()
@@ -385,7 +394,7 @@ class IncidentSampler():
                                                                  incident_types)
         self.T = len(self.sampling_dict)
 
-    def _assign_predictor(self, predictor):
+    def _assign_predictor(self, predictor, fc_dir):
         """ Initialize incident rate predictor and assign to property.
 
         Parameters
@@ -396,7 +405,8 @@ class IncidentSampler():
         """
         if predictor == "prophet":
             if self.verbose: print("Initializing incident rate predictor...")
-            self.predictor = ProphetIncidentPredictor(load_forecast=True, verbose=True)
+            self.predictor = ProphetIncidentPredictor(load_forecast=True, fc_dir=fc_dir,
+                                                      verbose=True)
         else:
             raise ValueError("Currently, only predictor='prophet' is supported.")
 

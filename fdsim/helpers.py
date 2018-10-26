@@ -43,6 +43,6 @@ def quick_load_simulator(path="data/simulator.pickle"):
     -------
     The loaded Simulator object.
     """
-    sim = pickle.load(open("data/simulator.pickle", "rb"))
+    sim = pickle.load(open(path, "rb"))
     sim.rsampler._create_response_time_generators()
     return sim

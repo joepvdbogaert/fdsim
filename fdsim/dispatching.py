@@ -79,11 +79,11 @@ class ShortestDurationDispatcher(BaseDispatcher):
         else:
             self.time_matrix = self._get_travel_durations()
 
-        self.matrix_names = np.array(self.time_matrix.columns)
-        self.time_matrix = self.time_matrix.values
-        self.n_stations = np.sum(pd.Series(self.matrix_names).str[0:2] != "13")
-        self.time_matrix_stations = self.time_matrix[-self.n_stations:]
-        self.station_names = self.matrix_names[-self.n_stations:]
+        self.matrix_names = np.array(self.time_matrix.columns, dtype=str)
+        self.time_matrix = np.array(self.time_matrix.values, dtype=np.float)
+        self.n_original_stations = np.sum(pd.Series(self.matrix_names).str[0:2] != "13")
+        self.time_matrix_stations = self.time_matrix[-self.n_original_stations:, :]
+        self.station_names = self.matrix_names[-self.n_original_stations:]
 
         if save_matrix:
             self.save_time_matrix(self.path)
@@ -106,6 +106,27 @@ class ShortestDurationDispatcher(BaseDispatcher):
                                        url_config=self.osrm_config)
         return time_matrix
 
+    def set_custom_stations(self, station_locations, station_names):
+        """ Set custom station locations.
+
+        The function recreates the time_matrix_stations, but leaves the original
+        time_matrix intact. The new time_matrix_stations has len(station_locations) rows
+        and the same columns as time_matrix (fictive column names are still 'matrix_names').
+
+        Parameters
+        ----------
+        station_locations: array-like of strings
+            The demand locations that should get a fire station.
+        station_names: array-like of strings
+            The names of the custom stations.
+        """
+        assert len(station_locations) == len(station_names), ("Lengths of station_locations"
+            " and station_names does not match")
+
+        loc_indexes = [np.nonzero(self.matrix_names == loc)[0][0] for loc in station_locations]
+        self.time_matrix_stations = self.time_matrix[loc_indexes, :]
+        self.station_names = np.array(station_names, dtype=str)
+
     def dispatch(self, destination_loc, candidate_vehicles):
         """ Dispatches the vehicle with the shortest estimated response time
             according to OSRM.
@@ -127,7 +148,7 @@ class ShortestDurationDispatcher(BaseDispatcher):
             vehicle_locs = np.array([v.current_station for v in candidate_vehicles], dtype=str)
             # create subset of time_matrix corresponding to available vehicles
             mask = np.in1d(self.station_names, vehicle_locs)
-            dest_idx = np.nonzero(self.matrix_names == destination_loc)
+            dest_idx = np.nonzero(self.matrix_names == destination_loc)[0][0]
             options = self.time_matrix_stations[mask, dest_idx]
             # choose closest station and corresponding vehicle ID
             best_station = self.station_names[mask][options.argmin()]

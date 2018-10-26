@@ -6,7 +6,7 @@ from scipy.stats import lognorm, gamma, bayes_mvs
 from sklearn import linear_model
 import copy
 
-from helpers import lonlat_to_xy, xy_to_lonlat
+from fdsim.helpers import lonlat_to_xy, xy_to_lonlat
 
 
 def prepare_data_for_response_time_analysis(incidents, deployments, stations, vehicles):
@@ -342,7 +342,7 @@ def model_travel_time(data):
     """
 
     # remove records without travel time
-    data = data[~data["inzet_rijtijd"].isnull()]
+    data = data[~data["inzet_rijtijd"].isnull()].copy()
 
     # remove unreliable data points
     data, _, _ = robust_remove_travel_time_outliers(data)
@@ -427,7 +427,7 @@ def fit_dispatch_times(data, rough_upper_bound=600):
          pd.to_datetime(data["dim_incident_start_datumtijd"], dayfirst=True)).dt.seconds
 
     # filter out unrealistic values
-    data = data[data["dispatch_time"] <= rough_upper_bound]
+    data = data[data["dispatch_time"] <= rough_upper_bound].copy()
 
     # fit one random variable on all data for the types with too few
     # observations
@@ -449,7 +449,7 @@ def fit_dispatch_times(data, rough_upper_bound=600):
     return rv_dict
 
 
-def fit_turnout_times(data, station_names=None, rough_upper_bound=600):
+def fit_turnout_times(data, station_names=None, rough_upper_bound=600, types_only=False):
     """ Fit a lognormal random variable to the dispatch time per
         incident type.
 
@@ -494,29 +494,46 @@ def fit_turnout_times(data, station_names=None, rough_upper_bound=600):
     types = data["dim_incident_incident_type"].unique()
     rv_dict = {}
 
-    for station in station_names:
-
-        # backup random variable per station
-        dfstation = data[data["inzet_kazerne_groep"] == station]
-        station_backup_rv = fit_gamma_rv(dfstation["turnout_time"],
-                                         floc=np.min(dfstation["turnout_time"]) - 0.1,
-                                         scale=100)
-
-        # create dict with entry for every type with station-specific data
-        station_rv_dict = {}
-
+    if types_only:
+        backup_rv = fit_gamma_rv(data["turnout_time"],
+                                 floc=np.min(data["turnout_time"]) - 0.1,
+                                 scale=100)
+        rv_dict = {}
         for type_ in types:
-            X = dfstation[dfstation["dim_incident_incident_type"] == type_]["turnout_time"]
+            X = data[data["dim_incident_incident_type"] == type_]["turnout_time"]
             if sample_size_sufficient(X):
-                station_rv_dict[type_] = fit_gamma_rv(X,
-                                                      floc=np.min(X)-0.1,
-                                                      scale=100)
+                rv_dict[type_] = fit_gamma_rv(X,
+                                              floc=np.min(X)-0.1,
+                                              scale=100)
             else:
-                station_rv_dict[type_] = copy.deepcopy(station_backup_rv)
+                rv_dict[type_] = copy.deepcopy(backup_rv)
 
-        rv_dict[station] = station_rv_dict.copy()
+        return rv_dict
 
-    return rv_dict
+    else:
+        for station in station_names:
+
+            # backup random variable per station
+            dfstation = data[data["inzet_kazerne_groep"] == station]
+            station_backup_rv = fit_gamma_rv(dfstation["turnout_time"],
+                                             floc=np.min(dfstation["turnout_time"]) - 0.1,
+                                             scale=100)
+
+            # create dict with entry for every type with station-specific data
+            station_rv_dict = {}
+
+            for type_ in types:
+                X = dfstation[dfstation["dim_incident_incident_type"] == type_]["turnout_time"]
+                if sample_size_sufficient(X):
+                    station_rv_dict[type_] = fit_gamma_rv(X,
+                                                          floc=np.min(X)-0.1,
+                                                          scale=100)
+                else:
+                    station_rv_dict[type_] = copy.deepcopy(station_backup_rv)
+
+            rv_dict[station] = station_rv_dict.copy()
+
+        return rv_dict
 
 
 def fit_onscene_times(data, vehicles=["TS", "HV", "RV", "WO"], rough_lower_bound=60,
@@ -548,7 +565,7 @@ def fit_onscene_times(data, vehicles=["TS", "HV", "RV", "WO"], rough_lower_bound
     {'incident type' -> {'vehicle type' -> 'scipy.stats.gamma object'}}.
     """
     # filter vehicles
-    data = data[np.in1d(data["voertuig_groep"], vehicles)]
+    data = data[np.in1d(data["voertuig_groep"], vehicles)].copy()
 
     # calculate on-scene times
     data["inzet_duration"] = \
@@ -557,7 +574,7 @@ def fit_onscene_times(data, vehicles=["TS", "HV", "RV", "WO"], rough_lower_bound
 
     # filter out unrealistically small and large values
     data = data[(data["inzet_duration"] > rough_lower_bound) &
-                (data["inzet_duration"] < rough_upper_bound)]
+                (data["inzet_duration"] < rough_upper_bound)].copy()
 
     # fit variables per incident type (use backup rv if not enough samples)
     overall_backup_rv = fit_gamma_rv(data["inzet_duration"],

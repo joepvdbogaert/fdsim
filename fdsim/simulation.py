@@ -2,11 +2,9 @@ import os
 import numpy as np
 import pandas as pd
 
-from sampling import IncidentSampler, ResponseTimeSampler
-from objects import Vehicle
-from dispatching import ShortestDurationDispatcher
-
-from definitions import ROOT_DIR
+from fdsim.sampling import IncidentSampler, ResponseTimeSampler
+from fdsim.objects import Vehicle
+from fdsim.dispatching import ShortestDurationDispatcher
 
 
 class Simulator():
@@ -16,45 +14,45 @@ class Simulator():
     ----------
     incidents: pd.DataFrame
         The incident data.
-    deployments: pd.DataFrame (optional)
+    deployments: pd.DataFrame
         The deployment data.
-    stations: pd.DataFrame (optional)
+    stations: pd.DataFrame
         The station information including coordinates and station names.
     vehicle_allocation: pd.DataFrame
         The allocation of vehicles to stations. Expected columns:
         ["kazerne", "#TS", "#RV", "#HV", "#WO"].
-    load_response_data: boolean
+    load_response_data: boolean, optional
         Whether to load preprocessed response data from disk (True) or to
         calculate it using OSRM.
-    load_time_matrix: boolean
+    load_time_matrix: boolean, optional
         Whether to load the matrix of travel durations from disk (True) or
         to calculate it using OSRM.
-    save_response_data: boolean
+    save_response_data: boolean, optional
         Whether to save the prepared response data with OSRM estimates to disk.
-    save_time_matrix: boolean
+    save_time_matrix: boolean, optional
         Whether to save the matrix of travel durations to disk.
-    vehicle_types: array-like of strings
+    vehicle_types: array-like of strings, optional
         The vehicle types to incorporate in the simulation. Optional, defaults
         to ["TS", "RV", "HV", "WO"].
-    predictor: str
+    predictor: str, optional
         Type of predictor to use. Defaults to 'prophet', which uses Facebook's
         Prophet package to forecast incident rate per incident type based on trend
         and yearly, weekly, and daily patterns.
-    start_time: Timestamp or str (convertible to timestamp)
+    start_time: Timestamp or str (convertible to timestamp), optional
         The start of the time period to simulate. If None, forecasts from
         the end of the data. Defaults to None.
-    end_time: Timestamp or str (convertible to timestamp)
+    end_time: Timestamp or str (convertible to timestamp), optional
         The end of the time period to simulate. If None, forecasts until one year
         after the end of the data. Defaults to None.
-    data_dir: str
+    data_dir: str, optional
         The path to the directory where data should be loaded from and saved to.
         Defaults to '/data/'.
-    osrm_host: str
+    osrm_host: str, optional
         URL to the OSRM API, defaults to 'http://192.168.56.101:5000'
-    location_col: str
+    location_col: str, optional
         The name of the column that identifies the demand locations, defaults to
         'hub_vak_bk'. This is also the only currently supported value.
-    verbose: boolean
+    verbose: boolean, optional
         Whether to print progress updates to the console during computations.
 
     Example
@@ -69,7 +67,7 @@ class Simulator():
 
     You can save the simulor object after initializing, so that next time you can
     skip the initialization (requires the _pickle_ module):
-    >>> sim.save_simulator_state()
+    >>> sim.save_simulator_object()
     >>> sim = pickle.load(open('simulator.pickle', 'rb'))
     """
     def __init__(self, incidents, deployments, stations, vehicle_allocation,
@@ -79,7 +77,7 @@ class Simulator():
                  osrm_host="http://192.168.56.101:5000", location_col="hub_vak_bk",
                  verbose=True):
 
-        self.data_dir = os.path.join(ROOT_DIR, data_dir)
+        self.data_dir = data_dir    
         self.verbose = verbose
 
         self.rsampler = ResponseTimeSampler(load_data=load_response_data,
@@ -93,7 +91,9 @@ class Simulator():
         locations = list(self.rsampler.location_coords.keys())
         self.isampler = IncidentSampler(incidents, deployments, vehicle_types, locations,
                                         start_time=start_time, end_time=end_time,
-                                        predictor=predictor, verbose=verbose)
+                                        predictor=predictor,
+                                        fc_dir=os.path.join(data_dir),
+                                        verbose=verbose)
 
         self.vehicles = self._create_vehicle_dict(vehicle_allocation)
 
@@ -120,8 +120,8 @@ class Simulator():
         ----------
         vehicle_allocation: pd.DataFrame
             The allocation of vehicles to stations. Column names should represent
-            vehicle types, row names station names, and values are the number of
-            vehicles assigned to the station.
+            vehicle types, except for one column named 'kazerne', which specifies the 
+            station names. Values are the number of vehicles assigned to the station.
 
         Returns
         -------
@@ -136,7 +136,7 @@ class Simulator():
         for r in range(len(vs)):
             for _ in range(vs[0].iloc[r]):
                 coords = self._get_station_coordinates(vs["kazerne"].iloc[r])
-                this_id = "V" + str(id_counter)
+                this_id = "VEHICLE " + str(id_counter)
                 vdict[this_id] = Vehicle(this_id, vs["level_0"].iloc[r],
                                          vs["kazerne"].iloc[r], coords)
                 id_counter += 1
@@ -227,7 +227,7 @@ class Simulator():
         ----------
         N: int
             The number of incidents to simulate.
-        restart: boolean
+        restart: boolean, optional
             Whether to empty the log and reset time before simulation (True)
             or to continue where stopped (False). Optional, defaults to True.
         """
@@ -326,18 +326,23 @@ class Simulator():
 
         Parameters
         ----------
-        file_name: str
-            How to name the csv of the log.
+        file_name: str, optional
+            How to name the csv of the log. Default: 'simulation_results.csv'.
         """
         self.results.to_csv(os.path.join(self.data_dir, file_name), index=False)
 
-    def save_simulator_object(self):
+    def save_simulator_object(self, path=None):
         """ Save the Simulator instance as a pickle for quick loading.
 
         Saves the entire Simulator object as a pickle, so that it can be quickly loaded
         with all preprocessed attributes. Note: generator objects are not supported by
         pickle, so they have to be removed before dumping and re-initialized after
-        loading.
+        loading. Therefore, always load the simulator with fdsim.helpers.quick_load_simulator.
+
+        Parameters
+        ----------
+        path: str, optional
+            Where to save the file.
 
         Notes
         -----
@@ -349,7 +354,61 @@ class Simulator():
             del self.rsampler.turnout_generators
             del self.rsampler.travel_time_noise_generators
             del self.rsampler.onscene_generators
-            pickle.dump(self, open(os.path.join(self.data_dir, "simulator.pickle"), "wb"))
+            if path is None:
+                path = os.path.join(self.data_dir, "simulator.pickle")
+            pickle.dump(self, open(path, "wb"))
         except ImportError:
             print("This method requires the pickle package, which is not installed. Install"
                   " with 'pip install pickle' or 'conda install pickle'.")
+
+    def set_vehicle_allocation(self, vehicle_allocation):
+        """ Assign custom allocation of vehicles to stations.
+
+        Parameters
+        ----------
+        vehicle_allocation: pd.DataFrame
+            The allocation of vehicles to stations. column names are
+            vehicle types and row names (index) are station names. Alternatively,
+            there is a column called 'kazerne' that specifies the station names.
+            In the latter case, the index is ignored.
+        """
+        # if 'kazerne' is not a column, use index as station names
+        if "kazerne" not in vehicle_allocation.columns:
+            station_col = vehicle_allocation.index.name
+            vehicle_allocation.reset_index(inplace=True, drop=False)
+            vehicle_allocation.rename(columns={station_col: "kazerne"}, inplace=True)
+
+        self.vehicles = self._create_vehicle_dict(vehicle_allocation)
+
+    def set_station_locations(self, station_locations, vehicle_allocation,
+                              station_names=None):
+        """ Assign custom locations of fire stations.
+
+        Parameters
+        ----------
+        station_locations: array-like of strings
+            The demand locations that should get a fire station.
+        vehicle_allocation: pd.DataFrame
+            The vehicles to assign to each station. Every row corresponds to
+            a station in the same order as station_locations and station_names.
+            Expects the column names to match the vehicle types (default: 
+            ["TS", "RV", "HV", "WO"]). Other columns are ignored, including 'kazerne',
+            since 'station_names' is used to define the names of the stations.
+        station_names: array-like of strings, optional
+            The custom names of the stations. If None, will use 'STATION 1', 'STATION 2', etc.
+        """
+        assert len(station_locations) == len(vehicle_allocation), ("Length of "
+            "station_locations does not match number of rows of vehicle_allocation. "
+            "station_locations has length {}, while vehicle_allocation has shape {}"
+            .format(len(station_locations), vehicle_allocation.shape))
+
+        if station_names is None:
+            station_names = ["STATION " + str(i) for i in range(len(station_locations))]
+
+        self.rsampler.set_custom_stations(station_locations, station_names)
+        self.dispatcher.set_custom_stations(station_locations, station_names)
+
+        vehicle_allocation["kazerne"] = station_names
+        self.set_vehicle_allocation(vehicle_allocation)
+
+        if self.verbose: print("Custom station locations set.")
