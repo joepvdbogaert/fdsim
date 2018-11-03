@@ -55,8 +55,8 @@ class Simulator():
     verbose: boolean, optional
         Whether to print progress updates to the console during computations.
 
-    Example
-    -------
+    Examples
+    --------
     >>> from simulation import Simulator
     >>> sim = Simulator(incidents, deployments, stations, vehicle_allocation)
     >>> sim.simulate_n_incidents(10000)
@@ -77,7 +77,7 @@ class Simulator():
                  osrm_host="http://192.168.56.101:5000", location_col="hub_vak_bk",
                  verbose=True):
 
-        self.data_dir = data_dir    
+        self.data_dir = data_dir
         self.verbose = verbose
 
         self.rsampler = ResponseTimeSampler(load_data=load_response_data,
@@ -120,7 +120,7 @@ class Simulator():
         ----------
         vehicle_allocation: pd.DataFrame
             The allocation of vehicles to stations. Column names should represent
-            vehicle types, except for one column named 'kazerne', which specifies the 
+            vehicle types, except for one column named 'kazerne', which specifies the
             station names. Values are the number of vehicles assigned to the station.
 
         Returns
@@ -242,21 +242,25 @@ class Simulator():
             t, time, type_, loc, prio, req_vehicles, func, dest = self._sample_incident(t)
             self._update_vehicles(t)
 
+            # sample dispatch time
+            dispatch = self.rsampler.sample_dispatch_time(type_)
+
+            # sample rest of the response time and log everything
             for v in req_vehicles:
 
                 vehicle, estimated_time = self._pick_vehicle(loc, v)
                 if vehicle is None:
-                    dispatch, turnout, travel, onscene, response = [np.nan]*5
+                    turnout, travel, onscene, response = [np.nan]*4
                     self._log([t, time, type_, loc, prio, func, v, "EXTERNAL", dispatch,
                                turnout, travel, onscene, response, "EXTERNAL", "EXTERNAL"])
                 else:
-                    dispatch, turnout, travel, onscene, response = \
-                        self.rsampler.sample_response_time(
-                            type_, loc, vehicle.current_station,
-                            vehicle.type, estimated_time=estimated_time)
+                    turnout, travel, onscene = self.rsampler.sample_response_time(
+                        type_, loc, vehicle.current_station, vehicle.type,
+                        estimated_time=estimated_time)
 
                     vehicle.dispatch(dest, t + (onscene/60) + (estimated_time/60))
 
+                    response = dispatch + turnout + travel
                     self._log([t, time, type_, loc, prio, func, vehicle.type, vehicle.id,
                                dispatch, turnout, travel, onscene, response,
                                vehicle.current_station, vehicle.base_station])
@@ -357,6 +361,7 @@ class Simulator():
             if path is None:
                 path = os.path.join(self.data_dir, "simulator.pickle")
             pickle.dump(self, open(path, "wb"))
+            self.rsampler._create_response_time_generators()
         except ImportError:
             print("This method requires the pickle package, which is not installed. Install"
                   " with 'pip install pickle' or 'conda install pickle'.")
@@ -391,16 +396,16 @@ class Simulator():
         vehicle_allocation: pd.DataFrame
             The vehicles to assign to each station. Every row corresponds to
             a station in the same order as station_locations and station_names.
-            Expects the column names to match the vehicle types (default: 
+            Expects the column names to match the vehicle types (default:
             ["TS", "RV", "HV", "WO"]). Other columns are ignored, including 'kazerne',
             since 'station_names' is used to define the names of the stations.
         station_names: array-like of strings, optional
             The custom names of the stations. If None, will use 'STATION 1', 'STATION 2', etc.
         """
-        assert len(station_locations) == len(vehicle_allocation), ("Length of "
-            "station_locations does not match number of rows of vehicle_allocation. "
-            "station_locations has length {}, while vehicle_allocation has shape {}"
-            .format(len(station_locations), vehicle_allocation.shape))
+        assert len(station_locations) == len(vehicle_allocation), \
+            ("Length of station_locations does not match number of rows of vehicle_allocation."
+             " station_locations has length {}, while vehicle_allocation has shape {}"
+             .format(len(station_locations), vehicle_allocation.shape))
 
         if station_names is None:
             station_names = ["STATION " + str(i) for i in range(len(station_locations))]

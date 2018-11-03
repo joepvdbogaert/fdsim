@@ -116,8 +116,8 @@ class ResponseTimeSampler():
 
         if self.verbose: print('Fitting random variables on response time...')
         self.high_prio_data = (self.data[(self.data["dim_prioriteit_prio"] == 1) &
-                                        (self.data["inzet_terplaatse_volgnummer"] == 1)]
-                                        .copy())
+                                         (self.data["inzet_terplaatse_volgnummer"] == 1)]
+                               .copy())
         self.dispatch_rv_dict = fit_dispatch_times(self.high_prio_data)
         self.turnout_time_rv_dict = fit_turnout_times(self.high_prio_data)
         self.travel_time_dict = model_travel_time_per_vehicle(self.high_prio_data)
@@ -177,8 +177,8 @@ class ResponseTimeSampler():
             Defaults to "hub_vak_bk".
         """
         assert self.fitted, "You fist have to 'fit()' before setting custom stations."
-        assert len(station_locations) == len(station_names), ("Lengths of station_locations"
-            " and station_names does not match")
+        assert len(station_locations) == len(station_names), \
+            ("Lengths of station_locations and station_names does not match")
 
         # set station coordinates
         self.station_coords = dict()
@@ -248,6 +248,20 @@ class ResponseTimeSampler():
             for vehicle_type, rv in self.onscene_time_rv_dict[incident_type].items():
                 self.onscene_generators[incident_type][vehicle_type] = time_generator(rv)
 
+    def sample_dispatch_time(self, incident_type):
+        """ Sample a random dispatch time, given the incident type.
+
+        Parameters
+        ----------
+        incident_type: str,
+            The type of incident to sample dispatch times for.
+
+        Returns
+        -------
+        int, the random dispatch time in seconds.
+        """
+        return next(self.dispatch_generators[incident_type])
+
     def sample_travel_time(self, estimated_time, vehicle,
                            osrm_host="http://192.168.56.101:5000"):
         """ Sample a random travel time.
@@ -294,21 +308,19 @@ class ResponseTimeSampler():
 
         Returns
         -------
-        Tuple of (dispatch time, turn-out time, travel time, on-scene time,
-        total response time). Note that the first three elements add up to the total response
-        time. Those are returned separately to allow detailed sampling results to be stored.
+        Tuple of (turn-out time, travel time, on-scene time). Note that the dispatch
+        time is sampled separately, since that is only done once per incident, while
+        this function is called per deployment.
         """
         if estimated_time is None:
             orig = self.station_coords[station_name]
             dest = self.location_coords[location_id]
             _, estimated_time = get_osrm_distance_and_duration(orig, dest, osrm_host=osrm_host)
 
-        dispatch = next(self.dispatch_generators[incident_type])
         turnout = next(self.turnout_generators[station_name][incident_type])
         travel = self.sample_travel_time(estimated_time, vehicle_type)
         onscene = next(self.onscene_generators[incident_type][vehicle_type])
-        response = dispatch + turnout + travel
-        return dispatch, turnout, travel, onscene, response
+        return turnout, travel, onscene
 
 
 class IncidentSampler():
