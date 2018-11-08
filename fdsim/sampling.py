@@ -2,6 +2,7 @@ import os
 import pandas as pd
 import numpy as np
 import warnings
+import copy
 
 from fdsim.incidentfitting import (
     get_prio_probabilities_per_type,
@@ -100,6 +101,7 @@ class ResponseTimeSampler():
               travel time and $\gamma$ is a random noise factor.
             - Saves the station and demand location coordinates in dictionaries.
         """
+        self.location_col = location_col
 
         if self.data is None:
             if incidents is not None and deployments is not None and stations is not None:
@@ -176,9 +178,9 @@ class ResponseTimeSampler():
             Name of the column to use as a location identifier for incidents.
             Defaults to "hub_vak_bk".
         """
-        assert self.fitted, "You fist have to 'fit()' before setting custom stations."
+        assert self.fitted, "You first have to 'fit()' before setting custom stations."
         assert len(station_locations) == len(station_names), \
-            ("Lengths of station_locations and station_names does not match")
+            ("Lengths of station_locations and station_names do not match")
 
         # set station coordinates
         self.station_coords = dict()
@@ -191,6 +193,52 @@ class ResponseTimeSampler():
         self.turnout_time_rv_dict = {}
         for station in station_names:
             self.turnout_time_rv_dict[station] = overall_turnout_dict
+        self._create_response_time_generators()
+
+    def move_station(self, station_name, new_location, new_name, keep_distributions):
+        """ Move the location of a single station.
+
+        Parameters
+        ----------
+        station_name: str
+            The name of the station to move.
+        new_location: str or tuple(float, float)
+            The new location of the station. If a string is passed, it is interpreted
+            as the identifier of the demand location to move the station to. If a tuple of
+            floats is passed, it is interpreted as the new coordinates in decimal (long, lat).
+        new_name: str
+            The new name of the station.
+        keep_distributions: boolean
+            If True, keep original turn-out time distribution. If False, use distribution
+            of all turn-out times (not station-dependent).
+        """
+        if isinstance(new_location, tuple):
+            self.station_coords[new_name] = new_location
+        elif isinstance(new_location, str):
+            self.station_coords[new_name] = self.location_coords[new_location]
+        else:
+            raise ValueError("new_location cannot be interpreted. Pass either a tuple of "
+                             "decimal longitude and latitude or a string representing "
+                             "a demand lcoation.")
+
+        if keep_distributions:
+            self.turnout_time_rv_dict[new_name] = copy.deepcopy(
+                self.turnout_time_rv_dict[station_name])
+        else:
+            turnout_dict = fit_turnout_times(self.high_prio_data, types_only=True)
+            self.turnout_time_rv_dict[new_name] = turnout_dict
+
+        if new_name != station_name:
+            del self.station_coords[station_name]
+            del self.turnout_time_rv_dict[station_name]
+
+        self._create_response_time_generators()
+
+    def reset_stations(self):
+        """ Reset the station locations and names to those obtained from the data. """
+        self.location_coords, self.station_coords = \
+            get_coordinates_locations_stations(self.data, location_col=self.location_col)
+        self.turnout_time_rv_dict = fit_turnout_times(self.high_prio_data)
         self._create_response_time_generators()
 
     def _create_response_time_generators(self):

@@ -22,6 +22,14 @@ class BaseDispatcher(object):
     def dispatch(self, destination_coords, candidate_vehicles):
         """ Decide which vehicle to dispatch """
 
+    @abstractmethod
+    def set_custom_stations(self, destination_coords, candidate_vehicles):
+        """ Set custom station locations. """
+
+    @abstractmethod
+    def move_station(self, destination_coords, candidate_vehicles):
+        """ Move the location of a single station. """
+
     def save_time_matrix(self, path="data/responsetimes/time_matrix.csv"):
         """ Save the matrix with travel durations. """
         (pd.DataFrame(self.time_matrix, columns=self.matrix_names, index=self.matrix_names)
@@ -75,15 +83,11 @@ class ShortestDurationDispatcher(BaseDispatcher):
         self.osrm_config = osrm.RequestConfig
 
         if load_matrix:
-            self.time_matrix = self.load_time_matrix(self.path)
+            self.time_matrix_df = self.load_time_matrix(self.path)
         else:
-            self.time_matrix = self._get_travel_durations()
+            self.time_matrix_df = self._get_travel_durations()
 
-        self.matrix_names = np.array(self.time_matrix.columns, dtype=str)
-        self.time_matrix = np.array(self.time_matrix.values, dtype=np.float)
-        self.n_original_stations = np.sum(pd.Series(self.matrix_names).str[0:2] != "13")
-        self.time_matrix_stations = self.time_matrix[-self.n_original_stations:, :]
-        self.station_names = self.matrix_names[-self.n_original_stations:]
+        self._prepare_dispatch_information()
 
         if save_matrix:
             self.save_time_matrix(self.path)
@@ -106,6 +110,14 @@ class ShortestDurationDispatcher(BaseDispatcher):
                                        url_config=self.osrm_config)
         return time_matrix
 
+    def _prepare_dispatch_information(self):
+        """ Prepare the time matrix data for dispatching. """
+        self.matrix_names = np.array(self.time_matrix_df.columns, dtype=str)
+        self.time_matrix = np.array(self.time_matrix_df.values, dtype=np.float)
+        self.n_original_stations = np.sum(pd.Series(self.matrix_names).str[0:2] != "13")
+        self.time_matrix_stations = self.time_matrix[-self.n_original_stations:, :]
+        self.station_names = self.matrix_names[-self.n_original_stations:]
+
     def set_custom_stations(self, station_locations, station_names):
         """ Set custom station locations.
 
@@ -120,12 +132,42 @@ class ShortestDurationDispatcher(BaseDispatcher):
         station_names: array-like of strings
             The names of the custom stations.
         """
-        assert len(station_locations) == len(station_names), ("Lengths of station_locations"
-            " and station_names does not match")
+        assert len(station_locations) == len(station_names), \
+            "Lengths of station_locations and station_names does not match"
 
         loc_indexes = [np.nonzero(self.matrix_names == loc)[0][0] for loc in station_locations]
         self.time_matrix_stations = self.time_matrix[loc_indexes, :]
         self.station_names = np.array(station_names, dtype=str)
+
+    def move_station(self, station_name, new_location, new_name):
+        """ Move the location of a single station.
+
+        Parameters
+        ----------
+        station_name: str
+            The name of the station to move.
+        new_location: str or tuple(float, float)
+            The new location of the station. Either a string matching the ID of a demand
+            location or a tuple of decimal longitude latitude.
+        new_name: str
+            The new name of the station. To keep the old name, simply set this parameter
+            equal to station_name.
+        """
+        if isinstance(new_location, str):
+            location_index = np.nonzero(self.matrix_names == new_location)[0][0]
+            station_index = np.nonzero(self.station_names == station_name)
+            self.time_matrix_stations[station_index, :] = self.time_matrix[location_index, :]
+            self.station_names[station_index] = new_name
+        elif isinstance(new_location, tuple):
+            raise NotImplementedError("Setting location by coordinates not implemented yet.")
+        else:
+            raise ValueError("new_location cannot be interpreted. Pass either a tuple of "
+                             "decimal longitude and latitude or a string representing a "
+                             "demand lcoation.")
+
+    def reset_stations(self):
+        """ Reset station locations and names to the original stations from the data. """
+        self._prepare_dispatch_information()
 
     def dispatch(self, destination_loc, candidate_vehicles):
         """ Dispatches the vehicle with the shortest estimated response time

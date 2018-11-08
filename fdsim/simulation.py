@@ -79,6 +79,9 @@ class Simulator():
 
         self.data_dir = data_dir
         self.verbose = verbose
+        self.stations = stations
+        self.vehicle_allocation = vehicle_allocation.copy()
+        self.original_vehicle_allocation = vehicle_allocation.copy()
 
         self.rsampler = ResponseTimeSampler(load_data=load_response_data,
                                             data_dir=self.data_dir,
@@ -151,7 +154,7 @@ class Simulator():
         demand_location: str
             The ID of the demand location to get the coordinates of.
         """
-        return self.rsampler.locations_coords[demand_location]
+        return self.rsampler.location_coords[demand_location]
 
     def _get_station_coordinates(self, station_name):
         """ Get the coordinates of a fire station.
@@ -218,7 +221,18 @@ class Simulator():
 
     def _prepare_results(self):
         """ Create pd.DataFrame with descriptive column names of logged results."""
-        self.results = pd.DataFrame(self.log[0:self.log_index, :], columns=self.log_columns)
+        self.results = pd.DataFrame(self.log[0:self.log_index, :], columns=self.log_columns,
+                                    dtype=object)
+
+        # cast types
+        dtypes = [np.float, pd.Timestamp, str, str, np.int, str, str, str,
+                  np.float, np.float, np.float, np.float, np.float, str, str]
+
+        self.results = self.results.astype(
+            dtype={self.log_columns[c]: dtypes[c] for c in range(len(self.log_columns))})
+
+        # add reponse time targets
+        self.results["target"] = 10*60
 
     def simulate_n_incidents(self, N, restart=True):
         """ Simulate N incidents and their reponses.
@@ -289,11 +303,12 @@ class Simulator():
             # multiple deployments per incident
             size = 3*N
 
-        self.log = np.empty((size, 15), dtype=object)
         self.log_columns = ["t", "time", "incident_type", "location", "priority",
                             "object_function", "vehicle_type", "vehicle_id", "dispatch_time",
                             "turnout_time", "travel_time", "on_scene_time", "response_time",
                             "station", "base_station_of_vehicle"]
+
+        self.log = np.empty((size, 15), dtype=object)
         self.log_index = 0
 
     def _log(self, values):
@@ -382,8 +397,28 @@ class Simulator():
             station_col = vehicle_allocation.index.name
             vehicle_allocation.reset_index(inplace=True, drop=False)
             vehicle_allocation.rename(columns={station_col: "kazerne"}, inplace=True)
+            vehicle_allocation["kazerne"] = vehicle_allocation["kazerne"].str.upper()
 
+        self.vehicle_allocation = vehicle_allocation.copy()
         self.vehicles = self._create_vehicle_dict(vehicle_allocation)
+
+    def set_vehicles(self, station_name, vehicle_type, number):
+        """ Set the number of vehicles for a specific station and vehicle_type.
+
+        Parameters
+        ----------
+        station_name: str,
+            The name of the station to change the vehicles for.
+        vehicle_type: str,
+            The type of vehicle to change the number of vehicles for.
+        number: int
+            The new number of vehicles of vehicle_type to assign to the station.
+        """
+        vehicle_allocation = self.vehicle_allocation.copy()
+        if "kazerne" in vehicle_allocation.columns:
+            vehicle_allocation.set_index("kazerne", inplace=True)
+        vehicle_allocation.loc[station_name, vehicle_type] = number
+        self.set_vehicle_allocation(vehicle_allocation)
 
     def set_station_locations(self, station_locations, vehicle_allocation,
                               station_names=None):
@@ -417,3 +452,129 @@ class Simulator():
         self.set_vehicle_allocation(vehicle_allocation)
 
         if self.verbose: print("Custom station locations set.")
+
+    def move_station(self, station_name, new_location, keep_name=True,
+                     keep_distributions=True, new_name=None):
+        """ Move an existing station to a new location.
+
+        Parameters
+        ----------
+        station_name: str
+            The name of the station to move.
+        new_location: str
+            The identifier of the demand location to move the station to or
+            the decimal longitude and latitude coordinates to move the station
+            to.
+        keep_name: boolean, optional (default: True)
+            Whether to keep the current name of the station or not.
+        keep_distribution: boolean, optional (default: True)
+            Whether to keep distributions of fitted random variables, such as
+            the distribution of the turn-out time.
+        new_name: str, required if keep_name=False
+            New name of the station. Ignored if keep_name=True.
+        """
+        if keep_name:
+            new_name = station_name
+        else:
+            assert (new_name is not None), "If keep_name=False, new_name must be specified."
+
+        self.rsampler.move_station(station_name, new_location, new_name, keep_distributions)
+        self.dispatcher.move_station(station_name, new_location, new_name)
+
+        vehicle_allocation = self.vehicle_allocation.copy()
+        if not keep_name:
+            if "kazerne" not in vehicle_allocation.columns:
+                vehicle_allocation.reset_index(drop=False, inplace=True)
+            station_index = np.nonzero(vehicle_allocation["kazerne"].values
+                                       == station_name)[0][0]
+            vehicle_allocation["kazerne"].iloc[station_index] = new_name
+        self.set_vehicle_allocation(vehicle_allocation)
+
+        if self.verbose:
+            print("Station moved to {} and vehicles re-initialized".format(new_location))
+
+    def reset_stations(self):
+        """ Reset station locations and names to the original stations from the data. """
+        self.rsampler.reset_stations()
+        self.dispatcher.reset_stations()
+        self.set_vehicle_allocation(self.original_vehicle_allocation)
+
+    def evaluate_performance(self, metric="on_time", vehicles=None, priorities=None,
+                             group_by=None, by_incident=True):
+        """ Evaluate the performance of a finished simulation run.
+
+        Parameters
+        ----------
+        metric: str, one of {'on_time', 'mean_response_time', 'mean_lateness'}, optional
+            The performance metric to calculate. The available metrics are defined as follows:
+            - on_time_deployments: the proportion of deployments that arrived within the
+                given norm/target.
+            - mean_response_time: the mean response time in seconds.
+            - mean_lateness: the mean time in seconds that incidents were too late
+                (deployments that were on time have a lateness of zero).
+            Defaults to "on_time".
+        vehicles: str or array-like of strings, optional
+            The vehicle types to take into account when calculating the metric.
+        priorities: int or array-like of integers in [1,3], optional
+            The incident priorities to include when calculating the metric.
+        group_by: str or array-like of strings, optional
+            The columns to group by when calculating the performance metric.
+
+        Returns
+        -------
+        A float, representing the calculated metric if group_by is None. A pd.DataFrame with
+        columns [group_by[0], ..., groupby[n], <metric>], where <metric> is the name of the
+        metric and the values in that column are the scores per group.
+        """
+        def calc_on_time(data):
+            return np.mean(data["response_time"] <= data["target"])
+
+        def calc_mean_response_time(data):
+            return data["response_time"].mean()
+
+        def calc_mean_lateness(data):
+            return np.mean(np.maximum(0, data["response_time"] - data["target"]))
+
+        # Process input variations
+        if isinstance(vehicles, str):
+            vehicles = [vehicles]
+        if isinstance(priorities, int):
+            priorities = [priorities]
+
+        # Set evaluation function
+        if metric == "on_time":
+            func = calc_on_time
+        elif metric == "mean_response_time":
+            func = calc_mean_response_time
+        elif metric == "mean_lateness":
+            func = calc_mean_lateness
+        else:
+            raise ValueError("'metric' must be one of "
+                             "['on_time', 'mean_response_time', 'mean_lateness'].")
+
+        # Filter data
+        results_filtered = self.results.copy()
+        if vehicles is not None:
+            results_filtered = results_filtered[np.isin(results_filtered["vehicle_type"],
+                                                        vehicles)]
+        if priorities is not None:
+            results_filtered = results_filtered[np.isin(results_filtered["priority"],
+                                                        priorities)]
+
+        if by_incident:
+            # only use first arriving TS, ignore if no TS deployed
+            results_filtered = results_filtered[results_filtered["vehicle_type"] == "TS"]
+            results_filtered = (results_filtered.sort_values("response_time")
+                                                .groupby("t", as_index=False)
+                                                .first()
+                                                .dropna())
+        # Calculate metric (by group)
+        if group_by is not None:
+            performance = (results_filtered.groupby(group_by)
+                                           .apply(func)
+                                           .reset_index()
+                                           .rename(columns={0: metric}))
+        else:
+            performance = func(results_filtered)
+
+        return performance
