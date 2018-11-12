@@ -9,4 +9,6 @@ setup(name='fdsim',
       author_email='j.v.d.bogaert@tue.nl',
       license='None',
       packages=['fdsim'],
-      zip_safe=False)
+      zip_safe=False,
+      setup_requires=["pytest-runner"],
+      tests_require=["pytest"])
