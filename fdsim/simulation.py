@@ -1,6 +1,7 @@
 import os
 import numpy as np
 import pandas as pd
+import pickle
 
 from fdsim.sampling import IncidentSampler, ResponseTimeSampler
 from fdsim.objects import Vehicle
@@ -80,8 +81,8 @@ class Simulator():
         self.data_dir = data_dir
         self.verbose = verbose
         self.stations = stations
-        self.vehicle_allocation = vehicle_allocation.copy()
-        self.original_vehicle_allocation = vehicle_allocation.copy()
+        self.vehicle_allocation = self._preprocess_vehicle_allocation(vehicle_allocation)
+        self.original_vehicle_allocation = self.vehicle_allocation.copy()
 
         self.rsampler = ResponseTimeSampler(load_data=load_response_data,
                                             data_dir=self.data_dir,
@@ -116,6 +117,21 @@ class Simulator():
 
         if self.verbose: print("Simulator is ready. At your service.")
 
+    @staticmethod
+    def _preprocess_vehicle_allocation(vehicle_allocation):
+        """ Pre-process the vehicle allocation dataframe to ensure consistency. """
+
+        # if 'kazerne' is not a column, use index as station names
+        if "kazerne" not in vehicle_allocation.columns:
+            station_col = vehicle_allocation.index.name
+            vehicle_allocation.reset_index(inplace=True, drop=False)
+            vehicle_allocation.rename(columns={station_col: "kazerne"}, inplace=True)
+
+        vehicle_allocation["kazerne"] = vehicle_allocation["kazerne"].str.upper()
+        vehicle_allocation.rename(columns={"#WO": "WO", "#TS": "TS", "#RV": "RV", "#HV": "HV"},
+                                  inplace=True)
+        return vehicle_allocation
+
     def _create_vehicle_dict(self, vehicle_allocation):
         """ Create a dictionary of Vehicle objects from the station data.
 
@@ -130,9 +146,7 @@ class Simulator():
         -------
         A dictionary like: {'vehicle id' -> Vehicle object}.
         """
-        vehicle_allocation["kazerne"] = vehicle_allocation["kazerne"].str.upper()
-        vehicle_allocation.rename(columns={"#WO": "WO", "#TS": "TS", "#RV": "RV", "#HV": "HV"},
-                                  inplace=True)
+        vehicle_allocation = self._preprocess_vehicle_allocation(vehicle_allocation)
         vs = vehicle_allocation.set_index("kazerne").unstack().reset_index()
         vdict = {}
         id_counter = 1
@@ -367,19 +381,14 @@ class Simulator():
         -----
         Requires the pickle package to be installed.
         """
-        try:
-            import pickle
-            del self.rsampler.dispatch_generators
-            del self.rsampler.turnout_generators
-            del self.rsampler.travel_time_noise_generators
-            del self.rsampler.onscene_generators
-            if path is None:
-                path = os.path.join(self.data_dir, "simulator.pickle")
-            pickle.dump(self, open(path, "wb"))
-            self.rsampler._create_response_time_generators()
-        except ImportError:
-            print("This method requires the pickle package, which is not installed. Install"
-                  " with 'pip install pickle' or 'conda install pickle'.")
+        del self.rsampler.dispatch_generators
+        del self.rsampler.turnout_generators
+        del self.rsampler.travel_time_noise_generators
+        del self.rsampler.onscene_generators
+        if path is None:
+            path = os.path.join(self.data_dir, "simulator.pickle")
+        pickle.dump(self, open(path, "wb"))
+        self.rsampler._create_response_time_generators()
 
     def set_vehicle_allocation(self, vehicle_allocation):
         """ Assign custom allocation of vehicles to stations.
@@ -391,14 +400,8 @@ class Simulator():
             vehicle types and row names (index) are station names. Alternatively,
             there is a column called 'kazerne' that specifies the station names.
             In the latter case, the index is ignored.
-        """
-        # if 'kazerne' is not a column, use index as station names
-        if "kazerne" not in vehicle_allocation.columns:
-            station_col = vehicle_allocation.index.name
-            vehicle_allocation.reset_index(inplace=True, drop=False)
-            vehicle_allocation.rename(columns={station_col: "kazerne"}, inplace=True)
-            vehicle_allocation["kazerne"] = vehicle_allocation["kazerne"].str.upper()
-
+        """            
+        vehicle_allocation = self._preprocess_vehicle_allocation(vehicle_allocation)
         self.vehicle_allocation = vehicle_allocation.copy()
         self.vehicles = self._create_vehicle_dict(vehicle_allocation)
 
