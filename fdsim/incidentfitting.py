@@ -2,7 +2,7 @@ import numpy as np
 import pandas as pd
 
 
-def prepare_incidents_for_spatial_analysis(incidents, location_col):
+def prepare_incidents_for_spatial_analysis(incidents):
     """ Perform initial preprocessing tasks before fitting
         parameters and obtaining probabilities from the incident data.
 
@@ -10,8 +10,6 @@ def prepare_incidents_for_spatial_analysis(incidents, location_col):
     ----------
     incidents: pd.DataFrame
         The incident data to prepare.
-    location_col: str
-        The column in 'incidents' that identifies the demand location.
 
     Notes
     -----
@@ -136,8 +134,7 @@ def get_spatial_distribution_per_type(incidents, location_col="hub_vak_bk"):
     """
 
     # filter out missing values and other irrelevant observations
-    incidents = prepare_incidents_for_spatial_analysis(incidents,
-                                                       location_col)
+    incidents = prepare_incidents_for_spatial_analysis(incidents)
 
     # group and count
     grouped = incidents.groupby(["dim_incident_incident_type", location_col])
@@ -169,7 +166,7 @@ def get_building_function_probabilities(incidents, location_col="hub_vak_bk"):
     {'location id' -> {'incident type' -> {'building function' -> probability}}}.
     """
 
-    incidents = prepare_incidents_for_spatial_analysis(incidents, location_col=location_col)
+    incidents = prepare_incidents_for_spatial_analysis(incidents)
 
     grouped = incidents.groupby([location_col, "dim_incident_incident_type",
                                  "inc_dim_object_functie"])["dim_incident_id"] \

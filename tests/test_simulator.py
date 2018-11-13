@@ -1,9 +1,9 @@
-import pytest
 from pytest import approx
 import numpy as np
 import pandas as pd
 from fdsim.helpers import quick_load_simulator
 import fdsim
+
 
 class TestSimulator(object):
 
@@ -40,7 +40,7 @@ class TestSimulator(object):
         assert len([v for v in vehicles.values() if v.type == "WO"]) == klass.vehicle_allocation["WO"].sum(), "Incorrect number of WO vehicles"
         for i in range(len(klass.vehicle_allocation)):
             station_name = klass.vehicle_allocation["kazerne"].iloc[i]
-            assert len([v for v in vehicles.values() if v.base_station == station_name]) == klass.vehicle_allocation.set_index("kazerne").iloc[i,:].sum(), \
+            assert len([v for v in vehicles.values() if v.base_station == station_name]) == klass.vehicle_allocation.set_index("kazerne").iloc[i, :].sum(), \
                 "Incorrect number of vehicles for station {}".format(station_name)
 
     def test_create_vehicle_dict_empty(self):
@@ -154,7 +154,7 @@ class TestSimulator(object):
         r = np.array([450, 230, 350, 790, 359, 206, 383, 625, 893, 634], dtype=float)
         self.sim.results["response_time"] = r
         self.sim.results["target"] = np.array([600] * 10, dtype=float)
-        ts_responses = self.sim.results["response_time"].values[self.sim.results["vehicle_type"]=="TS"]
+        ts_responses = self.sim.results["response_time"].values[self.sim.results["vehicle_type"] == "TS"]
         ontime_score = self.sim.evaluate_performance(metric="on_time", vehicles=["TS"], priorities=None, group_by=None, by_incident=False)
         meanresponsetime_score = self.sim.evaluate_performance(metric="mean_response_time", vehicles=["TS"], priorities=None, group_by=None, by_incident=False)
         meanlateness_score = self.sim.evaluate_performance(metric="mean_lateness", vehicles=["TS"], priorities=None, group_by=None, by_incident=False)
@@ -173,19 +173,19 @@ class TestSimulator(object):
         meanresponsetime_scores = self.sim.evaluate_performance(metric="mean_response_time", vehicles=None, priorities=None, group_by="vehicle_type", by_incident=False)
         meanlateness_scores = self.sim.evaluate_performance(metric="mean_lateness", vehicles=None, priorities=None, group_by="vehicle_type", by_incident=False)
 
-        assert ontime_scores.shape == (4,2), "Output for on_time has unexpected shape: {}".format(ontime_score.shape)
-        assert meanresponsetime_scores.shape == (4,2), "Output for mean_response_timehas unexpected shape: {}".format(meanresponsetime_score.shape)
-        assert meanlateness_scores.shape == (4,2), "Output for mean_lateness has unexpected shape: {}".format(meanlateness_score.shape)
+        assert ontime_scores.shape == (4, 2), "Output for on_time has unexpected shape: {}".format(ontime_scores.shape)
+        assert meanresponsetime_scores.shape == (4, 2), "Output for mean_response_timehas unexpected shape: {}".format(meanresponsetime_scores.shape)
+        assert meanlateness_scores.shape == (4, 2), "Output for mean_lateness has unexpected shape: {}".format(meanlateness_scores.shape)
 
         ts = np.array([450, 350, 206, 625])
         rv = np.array([230, 634])
         wo = np.array([600, 893])
         hv = np.array([359, 383])
 
-        ts_ontime, ts_mean, ts_meanlate = np.mean(ts<=600), np.mean(ts), 25/4
-        rv_ontime, rv_mean, rv_meanlate = np.mean(rv<=600), np.mean(rv), 34/2
-        wo_ontime, wo_mean, wo_meanlate = np.mean(wo<=600), np.mean(wo), 293/2
-        hv_ontime, hv_mean, hv_meanlate = np.mean(hv<=600), np.mean(hv), 0
+        ts_ontime, ts_mean, ts_meanlate = np.mean(ts <= 600), np.mean(ts), 25 / 4
+        rv_ontime, rv_mean, rv_meanlate = np.mean(rv <= 600), np.mean(rv), 34 / 2
+        wo_ontime, wo_mean, wo_meanlate = np.mean(wo <= 600), np.mean(wo), 293 / 2
+        hv_ontime, hv_mean, hv_meanlate = np.mean(hv <= 600), np.mean(hv), 0
 
         ontimes = [hv_ontime, rv_ontime, ts_ontime, wo_ontime]
         means = [hv_mean, rv_mean, ts_mean, wo_mean]

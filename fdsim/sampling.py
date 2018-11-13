@@ -443,10 +443,12 @@ class IncidentSampler():
 
         Parameters
         ----------
-        start_time: timestamp, str convertible to timestamp
-            The start date and time of the period to simulate.
-        end_time: timestamp, str convertible to timestamp
-            The start date and time of the period to simulate.
+        start_time: timestamp, str convertible to timestamp, or None
+            The start date and time of the period to simulate. If None,
+            use all available timestamps in the forecast.
+        end_time: timestamp, str convertible to timestamp, or None
+            The start date and time of the period to simulate. If None,
+            use all available timestamps in the forecast.
         incident_types: array-like of strings
             The incident types to incorporate in the simulation.
         """
@@ -538,7 +540,7 @@ class IncidentSampler():
         The new time t of the next incident and incident details:
         (t, incident_type, location, priority, vehicles, building function)
         """
-        d = self.sampling_dict[int(t//60 % (self.T))]
+        d = self.sampling_dict[int((t//60) % self.T)]
         t += np.random.exponential(d["beta"])
         incident_type = np.random.choice(a=self.types, p=d["type_distribution"])
         loc, prio, veh, func = self._sample_incident_details(incident_type)

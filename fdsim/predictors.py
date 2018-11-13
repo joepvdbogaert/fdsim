@@ -301,7 +301,7 @@ class ProphetIncidentPredictor(BaseIncidentPredictor):
         if end_time is None:
             end_time = fc["ds"].max()
 
-        fc = fc[(fc["ds"] >= start_time) & (fc["ds"] < end_time)]
+        fc = fc[(fc["ds"] >= start_time) & (fc["ds"] <= end_time)]
         time_unit = self._infer_time_unit(fc["ds"])
         del fc["ds"]
 
