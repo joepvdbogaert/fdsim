@@ -117,6 +117,25 @@ class TestSimulator(object):
             "Vehicle objects not initialized correctly"
         self.sim.reset_stations()
 
+    def test_relocate_vehicle(self):
+        ids_amstelveen = [v.id for v in self.sim.vehicles.values() if v.type == "TS" and v.current_station == "AMSTELVEEN"]
+        original_av = len(ids_amstelveen)
+        ids_hendrik = [v.id for v in self.sim.vehicles.values() if v.type == "TS" and v.current_station == "HENDRIK"]
+        original_hendrik = len(ids_hendrik)
+
+        self.sim.relocate_vehicle("TS", "AMSTELVEEN", "HENDRIK")
+
+        new_ids_av = [v.id for v in self.sim.vehicles.values() if v.type == "TS" and v.current_station == "AMSTELVEEN"]
+        new_ids_hendrik = [v.id for v in self.sim.vehicles.values() if v.type == "TS" and v.current_station == "HENDRIK"]
+
+        assert len(new_ids_av) == original_av - 1, "Number of vehicles at origin not updates correctly"
+        assert len(new_ids_hendrik) == original_hendrik + 1, "Number of vehicles at destination not updated correctly"
+        assert len(set(ids_amstelveen).union(set(ids_hendrik))) == len(set(new_ids_av).union(set(new_ids_hendrik))), "Total number of vehicles changed."
+        assert set(ids_amstelveen).union(set(ids_hendrik)) == set(new_ids_av).union(set(new_ids_hendrik)), "Total set of IDs changed"
+        assert set(ids_amstelveen).difference(set(new_ids_av)) == set(new_ids_hendrik).difference(set(ids_hendrik)), "ID of vehicle has gone missing"
+
+        self.sim.relocate_vehicle("TS", "HENDRIK", "AMSTELVEEN")
+
     def test_log_result(self):
         n = 100
         self.sim.simulate_n_incidents(n, restart=True)

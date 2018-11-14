@@ -233,6 +233,29 @@ class Simulator():
             if not vehicle.available and vehicle.becomes_available < t:
                 vehicle.return_to_base()
 
+    def relocate_vehicle(self, vehicle_type, origin, destination):
+        """ Relocate a vehicle form one station to another. The vehicle must be available and
+            will remain available, but just from a different location.
+
+        Parameters
+        ----------
+        vehicle_type: str, one of ['TS', 'RV', 'HV', 'WO']
+            The type of vehicle that should be relocated.
+        origin: str
+            The name of the station from which a vehicle should be moved.
+        destination: str
+            The name of the station the vehicle should be moved to.
+        """
+        new_coords = self._get_station_coordinates(destination)
+        # select vehicle
+        options = [v for v in self.vehicles.values() if v.available and
+                   v.current_station == origin and v.type == vehicle_type]
+        try:
+            options[0].relocate(destination, new_coords)
+        except IndexError:
+            raise ValueError("There is no vehicle available at station {} of type {}"
+                             .format(origin, vehicle_type))
+
     def _prepare_results(self):
         """ Create pd.DataFrame with descriptive column names of logged results."""
         self.results = pd.DataFrame(self.log[0:self.log_index, :], columns=self.log_columns,
@@ -400,7 +423,7 @@ class Simulator():
             vehicle types and row names (index) are station names. Alternatively,
             there is a column called 'kazerne' that specifies the station names.
             In the latter case, the index is ignored.
-        """            
+        """
         vehicle_allocation = self._preprocess_vehicle_allocation(vehicle_allocation)
         self.vehicle_allocation = vehicle_allocation.copy()
         self.vehicles = self._create_vehicle_dict(vehicle_allocation)
