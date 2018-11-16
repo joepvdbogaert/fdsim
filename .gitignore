@@ -113,3 +113,8 @@ data/
 *.xlsx
 *.geojson
 *.ipynb
+
+# docs
+_build/
+_static/
+_templates/

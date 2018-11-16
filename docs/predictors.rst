@@ -1,0 +1,5 @@
+Predictors
+**********
+
+.. automodule:: predictors
+   :members:

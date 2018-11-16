@@ -1,0 +1,4 @@
+Sampling
+********
+.. automodule:: sampling
+   :members:
