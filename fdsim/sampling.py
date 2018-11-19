@@ -96,9 +96,9 @@ class ResponseTimeSampler():
               deployment)
             - Fits lognormal random variables to dispatch times per incident type.
             - Fits Gamma random variables to turnout time per station and type.
-            - Models the travel time as $\alpha + \beta * \gamma (\theta, k) * \hat{t},
-              per vehicle type. Here $\hat{t}$ represents the OSRM estiamte of the
-              travel time and $\gamma$ is a random noise factor.
+            - Models the travel time as :math:`\alpha + \beta * \gamma (\theta, k) * \hat{t}`,
+              per vehicle type. Here :math:`\hat{t}` represents the OSRM estiamte of the
+              travel time and :math:`\gamma` is a random noise factor.
             - Saves the station and demand location coordinates in dictionaries.
         """
         self.location_col = location_col

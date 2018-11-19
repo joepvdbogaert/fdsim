@@ -64,12 +64,15 @@ class Simulator():
     >>> sim.save_log("simulation_results.csv")
 
     Continue simulating where you left of:
+    ```
     >>> sim.simulate_n_incidents(10000, restart=False)
-
+    ```
     You can save the simulor object after initializing, so that next time you can
     skip the initialization (requires the _pickle_ module):
+    ```
     >>> sim.save_simulator_object()
     >>> sim = pickle.load(open('simulator.pickle', 'rb'))
+    ```
     """
     def __init__(self, incidents, deployments, stations, vehicle_allocation,
                  load_response_data=True, load_time_matrix=True, save_response_data=False,
@@ -271,6 +274,44 @@ class Simulator():
         # add reponse time targets
         self.results["target"] = 10*60
 
+    def initialize_without_simulating(self, N=100000):
+        self._initialize_log(N)
+        self.t = 0
+
+    def simulate_single_incident(self):
+        """ Simulate a random incident and its corresponding deployments.
+
+        Requires the Simulator to be initialized with `initialize_without_simulating`.
+        Simulates a single incidents and all deployments that correspond to it.
+        """
+        # sample incident and update status of vehicles at new time t
+        self.t, time, type_, loc, prio, req_vehicles, func, dest = self._sample_incident(self.t)
+
+        self._update_vehicles(self.t)
+
+        # sample dispatch time
+        dispatch = self.rsampler.sample_dispatch_time(type_)
+
+        # sample rest of the response time and log everything
+        for v in req_vehicles:
+
+            vehicle, estimated_time = self._pick_vehicle(loc, v)
+            if vehicle is None:
+                turnout, travel, onscene, response = [np.nan]*4
+                self._log([self.t, time, type_, loc, prio, func, v, "EXTERNAL", dispatch,
+                           turnout, travel, onscene, response, "EXTERNAL", "EXTERNAL"])
+            else:
+                turnout, travel, onscene = self.rsampler.sample_response_time(
+                    type_, loc, vehicle.current_station, vehicle.type,
+                    estimated_time=estimated_time)
+
+                vehicle.dispatch(dest, self.t + (onscene/60) + (estimated_time/60))
+
+                response = dispatch + turnout + travel
+                self._log([self.t, time, type_, loc, prio, func, vehicle.type, vehicle.id,
+                           dispatch, turnout, travel, onscene, response,
+                           vehicle.current_station, vehicle.base_station])
+
     def simulate_n_incidents(self, N, restart=True):
         """ Simulate N incidents and their reponses.
 
@@ -283,38 +324,14 @@ class Simulator():
             or to continue where stopped (False). Optional, defaults to True.
         """
         if restart:
-            self._initialize_log(N)
-            t = 0
+            self.initialize_without_simulating()
         else:
-            t = self.log[0:self.log_index, 0].max()
+            # keep t as it is and keep log intact
+            # self.t = self.log[0:self.log_index, 0].max()
+            pass
 
         for _ in range(N):
-            # sample incident and update status of vehicles at new time t
-            t, time, type_, loc, prio, req_vehicles, func, dest = self._sample_incident(t)
-            self._update_vehicles(t)
-
-            # sample dispatch time
-            dispatch = self.rsampler.sample_dispatch_time(type_)
-
-            # sample rest of the response time and log everything
-            for v in req_vehicles:
-
-                vehicle, estimated_time = self._pick_vehicle(loc, v)
-                if vehicle is None:
-                    turnout, travel, onscene, response = [np.nan]*4
-                    self._log([t, time, type_, loc, prio, func, v, "EXTERNAL", dispatch,
-                               turnout, travel, onscene, response, "EXTERNAL", "EXTERNAL"])
-                else:
-                    turnout, travel, onscene = self.rsampler.sample_response_time(
-                        type_, loc, vehicle.current_station, vehicle.type,
-                        estimated_time=estimated_time)
-
-                    vehicle.dispatch(dest, t + (onscene/60) + (estimated_time/60))
-
-                    response = dispatch + turnout + travel
-                    self._log([t, time, type_, loc, prio, func, vehicle.type, vehicle.id,
-                               dispatch, turnout, travel, onscene, response,
-                               vehicle.current_station, vehicle.base_station])
+            self.simulate_single_incident()
 
         self._prepare_results()
         print("Simulated {} incidents. See Simulator.results for the results.".format(N))
@@ -538,6 +555,7 @@ class Simulator():
             - mean_response_time: the mean response time in seconds.
             - mean_lateness: the mean time in seconds that incidents were too late
                 (deployments that were on time have a lateness of zero).
+
             Defaults to "on_time".
         vehicles: str or array-like of strings, optional
             The vehicle types to take into account when calculating the metric.
