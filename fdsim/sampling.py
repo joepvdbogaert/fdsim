@@ -3,6 +3,7 @@ import pandas as pd
 import numpy as np
 import warnings
 import copy
+from itertools import chain
 
 from fdsim.incidentfitting import (
     get_prio_probabilities_per_type,
@@ -421,6 +422,8 @@ class IncidentSampler():
         self._create_incident_types()
         self._create_demand_locations()
 
+        self.incident_time_generator = self._incident_time_generator()
+
         if self.verbose: print("IncidentSampler ready for simulation.")
 
     def _infer_incident_types(self):
@@ -455,6 +458,7 @@ class IncidentSampler():
         self.sampling_dict = self.predictor.create_sampling_dict(start_time, end_time,
                                                                  incident_types)
         self.T = len(self.sampling_dict)
+        self.lambdas = 60 / np.array([d['beta'] for d in self.sampling_dict.values()])
 
     def _assign_predictor(self, predictor, fc_dir):
         """ Initialize incident rate predictor and assign to property.
@@ -507,6 +511,29 @@ class IncidentSampler():
         self.locations = {l: DemandLocation(l, building_probs[l])
                           for l in building_probs.keys()}
 
+    def _incident_time_generator(self):
+        """ Returns a generator object for incident times. """
+        while True:
+
+            # process periods in sampling dict in one go
+            n_arrivals = np.random.poisson(self.lambdas, size=len(self.lambdas))
+            total_arrivals = np.sum(n_arrivals)
+
+            periods = np.array([x for x in chain.from_iterable(
+                                [[i]*n_arrivals[i] for i in range(len(n_arrivals))])],
+                               dtype=int)
+
+            minutes = np.random.uniform(0, 60, size=total_arrivals)
+            times = np.sort(periods*60 + minutes)
+
+            # yield times one by one
+            for time in times:
+                yield time
+
+    def reset_time(self):
+        """ Reset the incident time generator to start from t=0. """
+        self.incident_time_generator = self._incident_time_generator()
+
     def _sample_incident_details(self, incident_type):
         """ Draw random sample of incident characteristics.
 
@@ -527,7 +554,7 @@ class IncidentSampler():
 
         return location, priority, vehicles, building_function
 
-    def sample_next_incident(self, t):
+    def sample_next_incident(self):
         """ Sample a random time and type for the next incident.
 
         Parameters
@@ -540,8 +567,8 @@ class IncidentSampler():
         The new time t of the next incident and incident details:
         (t, incident_type, location, priority, vehicles, building function)
         """
+        t = next(self.incident_time_generator)
         d = self.sampling_dict[int((t//60) % self.T)]
-        t += np.random.exponential(d["beta"])
         incident_type = np.random.choice(a=self.types, p=d["type_distribution"])
         loc, prio, veh, func = self._sample_incident_details(incident_type)
 

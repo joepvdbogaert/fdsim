@@ -22,6 +22,7 @@ class TestDistributions():
         # cls.sim = Simulator(cls.incidents, cls.deployments, cls.stations, cls.vehicle_allocation)
         sim = quick_load_simulator()
         sim.simulate_n_incidents(500000)
+        sim.isampler.reset_time()
         cls.sim_results = sim.results.copy()
         # cls.sim.save_simulator_object()
 
@@ -56,11 +57,13 @@ class TestDistributions():
             "Distribution over incident type for first time interval not as expected"
 
         sim_dist_over_hours = simulated_incidents.groupby("time")["t"].count().sort_index().values / len(simulated_incidents)
-        assert sim_dist_over_hours == approx(np.array([1.2, 1.2, 1.5, 1.5, 1.3])/np.sum([1.2, 1.2, 1.5, 1.5, 1.3]), abs=2e-2)
+        assert sim_dist_over_hours == approx(np.array([1.2, 1.2, 1.5, 1.5, 1.3])/np.sum([1.2, 1.2, 1.5, 1.5, 1.3]), abs=2e-2), \
+            "Distribution over hours not as expected"
 
         sim_dist = simulated_incidents.groupby("incident_type")["t"].count().sort_index().values / len(simulated_incidents)
         A = np.array([[0.4, 0.6, 0.2, 0.5, 0.3], [0.1, 0.2, 0.5, 0.4, 0.2], [0.7, 0.4, 0.8, 0.6, 0.8]])
         expected_dist = A.dot(np.array([1.2, 1.2, 1.5, 1.5, 1.3])/np.sum([1.2, 1.2, 1.5, 1.5, 1.3]))
+        expected_dist = expected_dist / np.sum(expected_dist)
         assert sim_dist == approx(expected_dist, abs=2e-2),\
             "Distribution over incident types not as expected"
 
@@ -123,6 +126,7 @@ class TestDistributions():
 
     def test_vehicle_distribution(self):
         deployments = self.deployments[np.isin(self.deployments["voertuig_groep"], ["TS", "RV", "HV", "WO"])].copy()
+        deployments = deployments[~deployments["voertuig_groep"].isnull()]
         real_dist = (deployments.groupby("voertuig_groep")["hub_inzet_id"]
                                 .count()
                                 .sort_index()
@@ -140,6 +144,12 @@ class TestDistributions():
 
     def test_vehicles_per_incident(self):
         deployments = self.deployments[np.isin(self.deployments["voertuig_groep"], ["TS", "RV", "HV", "WO"])].copy()
+        # add incident type to the deployment data
+        deployments = deployments.merge(
+            self.incidents[["dim_incident_id", "dim_incident_incident_type"]],
+            left_on="hub_incident_id", right_on="dim_incident_id", how="left")
+        deployments = deployments[~deployments["voertuig_groep"].isnull()]
+
         real = deployments.groupby("hub_incident_id")["voertuig_groep"].count().mean()
         simulated = self.sim_results.groupby("t")["vehicle_id"].count().mean()
         assert simulated == approx(real, abs=3e-2), "Mean number of vehicles per incident is not as in the data"
@@ -204,6 +214,7 @@ class TestDistributions():
     def calc_mean_and_std(self, data, filter=False):
         if filter:
             data = self.filter_extremes(data)
+        data = data[~np.isnan(data)]
         return np.mean(data), np.std(data)
 
     def test_dispatch_times_overall(self, dispatch_data):
@@ -245,34 +256,39 @@ class TestDistributions():
         return response_data
 
     def test_turnout_time_overall(self, turnout_data):
+        print(turnout_data.head())
         expected_mean, expected_std = self.calc_mean_and_std(turnout_data["turnout_time"].values)
+        print(self.sim_results["turnout_time"].head())
+        print(len(self.sim_results["turnout_time"].isnull()))
         simulated_mean, simulated_std = self.calc_mean_and_std(self.sim_results["turnout_time"].values)
 
         assert simulated_mean == approx(expected_mean, abs=5), "Overall mean turn-out time not as expected"
         assert simulated_std == approx(expected_std, abs=3), "Overall standard deviation of turn-out time not as expected"
 
-    def test_turnout_times_per_incident_and_station(self, dispatch_data):
+    def test_turnout_times_per_incident_and_station(self, turnout_data):
 
         for type_, station in [("Binnenbrand", "HENDRIK"), ("Hulpverlening algemeen", "AMSTELVEEN"), ("Reanimeren", "NICO")]:
             # filter data
-            data = dispatch_data[(dispatch_data["dim_incident_incident_type"] == type_) &
-                                 (dispatch_data["inzet_kazerne_groep"] == station)]
+            data = turnout_data[(turnout_data["dim_incident_incident_type"] == type_) &
+                                (turnout_data["inzet_kazerne_groep"] == station)]
 
             simulated_data = self.sim_results[(self.sim_results["incident_type"] == type_) &
                                               (self.sim_results["station"] == station)]
-
+            print(simulated_data.head())
             # calculate and check dispatch time mean and std
-            expected_mean, expected_std = self.calc_mean_and_std(data["dispatch_time"].values)
-            simulated_mean, simulated_std = self.calc_mean_and_std(simulated_data["dispatch_time"].values)
+            expected_mean, expected_std = self.calc_mean_and_std(data["turnout_time"].values)
+            simulated_mean, simulated_std = self.calc_mean_and_std(simulated_data["turnout_time"].values)
 
             assert simulated_mean == approx(expected_mean, abs=5), \
                 "Mean turn-out time for {} not as expected".format(type_)
-            assert simulated_std == approx(expected_std, abs=3), \
+            assert simulated_std == approx(expected_std, abs=5), \
                 "Standard deviation of turn-out time for {} not as expected".format(type_)
 
     def test_travel_time_distribution_overall(self):
-        data = pd.read_csv("./data/response_data.csv")
+        data = pd.read_csv("./data/response_data.csv", dtype={"hub_vak_bk": int}, low_memory=False)
         data = data[np.isin(data["voertuig_groep"], ["TS", "RV", "HV", "WO"])]
+        data = data[data["dim_prioriteit_prio"] == 1]
+        data = data[~data["inzet_rijtijd"].isnull()]
         data["speed"] = data["osrm_distance"] / data["inzet_rijtijd"] * 3.6
         data = data[(data["speed"] >= 16.5) & (data["speed"] <= 98.5)]
 
@@ -280,6 +296,6 @@ class TestDistributions():
         simulated_mean, simulated_std = self.calc_mean_and_std(self.sim_results["travel_time"].values)
 
         assert simulated_mean == approx(expected_mean, abs=5), \
-            "Overall mean travel time for {} not as expected"
+            "Overall mean travel time not as expected"
         assert simulated_std == approx(expected_std, abs=5), \
             "Overall standard deviation of travel time not as expected"

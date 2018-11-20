@@ -183,7 +183,7 @@ class Simulator():
         """
         return self.rsampler.station_coords[station_name]
 
-    def _sample_incident(self, t):
+    def _sample_incident(self):
         """ Sample the next incident.
 
         Parameters
@@ -192,7 +192,7 @@ class Simulator():
             The time in minutes since the simulation start. From t, the exact timestamp is
             determined, which leads to certain incident rates for different incident types.
         """
-        t, time, type_, loc, prio, req_vehicles, func = self.isampler.sample_next_incident(t)
+        t, time, type_, loc, prio, req_vehicles, func = self.isampler.sample_next_incident()
         destination_coords = self.rsampler.location_coords[loc]
         return t, time, type_, loc, prio, req_vehicles, func, destination_coords
 
@@ -256,8 +256,9 @@ class Simulator():
         try:
             options[0].relocate(destination, new_coords)
         except IndexError:
-            raise ValueError("There is no vehicle available at station {} of type {}"
-                             .format(origin, vehicle_type))
+            raise ValueError("There is no vehicle available at station {} of type {}."
+                             " List of options (should be empty): {}"
+                             .format(origin, vehicle_type, options))
 
     def _prepare_results(self):
         """ Create pd.DataFrame with descriptive column names of logged results."""
@@ -276,6 +277,7 @@ class Simulator():
 
     def initialize_without_simulating(self, N=100000):
         self._initialize_log(N)
+        self.isampler.reset_time()
         self.t = 0
 
     def simulate_single_incident(self):
@@ -285,7 +287,7 @@ class Simulator():
         Simulates a single incidents and all deployments that correspond to it.
         """
         # sample incident and update status of vehicles at new time t
-        self.t, time, type_, loc, prio, req_vehicles, func, dest = self._sample_incident(self.t)
+        self.t, time, type_, loc, prio, req_vehicles, func, dest = self._sample_incident()
 
         self._update_vehicles(self.t)
 
@@ -425,8 +427,11 @@ class Simulator():
         del self.rsampler.turnout_generators
         del self.rsampler.travel_time_noise_generators
         del self.rsampler.onscene_generators
+        del self.isampler.incident_time_generator
+
         if path is None:
             path = os.path.join(self.data_dir, "simulator.pickle")
+
         pickle.dump(self, open(path, "wb"))
         self.rsampler._create_response_time_generators()
 

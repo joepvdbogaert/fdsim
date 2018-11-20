@@ -45,4 +45,5 @@ def quick_load_simulator(path="data/simulator.pickle"):
     """
     sim = pickle.load(open(path, "rb"))
     sim.rsampler._create_response_time_generators()
+    sim.isampler.reset_time()
     return sim
