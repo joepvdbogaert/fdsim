@@ -118,3 +118,9 @@ data/
 _build/
 _static/
 _templates/
+
+# production branch: exclude python venv files and folders when venv resides in git folder
+bin/
+lib64
+pyvenv.cfg
+share/
