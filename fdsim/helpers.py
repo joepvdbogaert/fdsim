@@ -29,8 +29,8 @@ def quick_load_simulator(path="data/simulator.pickle"):
 
     Notes
     -----
-    Also re-initializes the response time generator objects, since they cannot
-    be pickled and were therefore deleted before saving.
+    Also re-initializes the response time and incident time generator objects, since they
+    cannot be pickled and were therefore deleted before saving.
 
     Parameters
     ----------
