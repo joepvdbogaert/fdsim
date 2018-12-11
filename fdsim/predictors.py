@@ -105,7 +105,7 @@ class ProphetIncidentPredictor(BaseIncidentPredictor):
     def fit(self, data, types=None):
         """ Perform time series decomposition using Prophet.
 
-        This function first prepare the data and saves the prepared data
+        This function first prepares the data and saves the prepared data
         as 'self.incidents'. then it creates a dictionary of Prophet() objects,
         where the keys equal the incident types and the corresponding model
         is fitted to the data of that type. The dictionary of models is stored
@@ -239,7 +239,7 @@ class ProphetIncidentPredictor(BaseIncidentPredictor):
         used directly as input for Prophet.fit().
         """
         dfprophet = incidents[["dim_incident_id", "dim_datum_datum",
-                               "dim_tijd_uur"]]
+                               "dim_tijd_uur", "dim_incident_incident_type"]]
         dfprophet = dfprophet[dfprophet["dim_incident_incident_type"] == type_]
         dfprophet = dfprophet.groupby(["dim_datum_datum", "dim_tijd_uur"]
                                       )["dim_incident_id"].count()
