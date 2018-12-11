@@ -74,6 +74,36 @@ class Simulator():
     >>> sim = pickle.load(open('simulator.pickle', 'rb'))
     ```
     """
+    # the target response times
+    target_dict = {'Bijeenkomstfunctie' : 10,
+                   'Industriefunctie' : 8,
+                   'Woonfunctie' : 8,
+                   'Straat' : 10,
+                   'Overige gebruiksfunctie' : 10,
+                   'Kantoorfunctie' : 10,
+                   'Logiesfunctie' : 8,
+                   'Onderwijsfunctie' : 8,
+                   'Grachtengordel' : 10,
+                   'Overig' : 10,
+                   'Winkelfunctie' : 5,
+                   'Kanalen en rivieren' : 10,
+                   'nan' : 10,
+                   'Trein' : 5,
+                   'Sportfunctie' : 10,
+                   'Regionale weg' : 10,
+                   'Celfunctie' : 5,
+                   'Tram' : 5,
+                   'Metro': 5,
+                   'Sloten en Vaarten' : 10,
+                   'Gezondheidszorgfunctie' : 8,
+                   'Lokale weg' : 5,
+                   'Polders' : 10,
+                   'Haven' : 10,
+                   'Autosnelweg' : 10,
+                   'Meren en plassen' : 10,
+                   'Hoofdweg' : 10,
+                   'unknown': 10}
+
     def __init__(self, incidents, deployments, stations, vehicle_allocation,
                  load_response_data=True, load_time_matrix=True, save_response_data=False,
                  save_time_matrix=False, vehicle_types=["TS", "RV", "HV", "WO"],
@@ -267,7 +297,7 @@ class Simulator():
 
         # cast types
         dtypes = [np.float, pd.Timestamp, str, str, np.int, str, str, str,
-                  np.float, np.float, np.float, np.float, np.float, str, str]
+                  np.float, np.float, np.float, np.float, np.float, np.float, str, str]
 
         self.results = self.results.astype(
             dtype={self.log_columns[c]: dtypes[c] for c in range(len(self.log_columns))})
@@ -279,6 +309,13 @@ class Simulator():
         self._initialize_log(N)
         self.isampler.reset_time()
         self.t = 0
+
+    def _get_target(self, incident_type, object_function):
+        """ Get the response time norm for a given incident. """
+        if incident_type in ['Binnenbrand', 'Buitenbrand']:
+            return self.target_dict[object_function] * 60
+        else: 
+            return 15 * 60
 
     def simulate_single_incident(self):
         """ Simulate a random incident and its corresponding deployments.
@@ -294,6 +331,9 @@ class Simulator():
         # sample dispatch time
         dispatch = self.rsampler.sample_dispatch_time(type_)
 
+        # get target response time
+        target = self._get_target(type_, func)
+
         # sample rest of the response time and log everything
         for v in req_vehicles:
 
@@ -301,7 +341,7 @@ class Simulator():
             if vehicle is None:
                 turnout, travel, onscene, response = [np.nan]*4
                 self._log([self.t, time, type_, loc, prio, func, v, "EXTERNAL", dispatch,
-                           turnout, travel, onscene, response, "EXTERNAL", "EXTERNAL"])
+                           turnout, travel, onscene, response, target, "EXTERNAL", "EXTERNAL"])
             else:
                 turnout, travel, onscene = self.rsampler.sample_response_time(
                     type_, loc, vehicle.current_station, vehicle.type,
@@ -311,7 +351,7 @@ class Simulator():
 
                 response = dispatch + turnout + travel
                 self._log([self.t, time, type_, loc, prio, func, vehicle.type, vehicle.id,
-                           dispatch, turnout, travel, onscene, response,
+                           dispatch, turnout, travel, onscene, response, target,
                            vehicle.current_station, vehicle.base_station])
 
     def simulate_n_incidents(self, N, restart=True):
@@ -362,9 +402,9 @@ class Simulator():
         self.log_columns = ["t", "time", "incident_type", "location", "priority",
                             "object_function", "vehicle_type", "vehicle_id", "dispatch_time",
                             "turnout_time", "travel_time", "on_scene_time", "response_time",
-                            "station", "base_station_of_vehicle"]
+                            "target", "station", "base_station_of_vehicle"]
 
-        self.log = np.empty((size, 15), dtype=object)
+        self.log = np.empty((size, 16), dtype=object)
         self.log_index = 0
 
     def _log(self, values):
@@ -434,6 +474,7 @@ class Simulator():
 
         pickle.dump(self, open(path, "wb"))
         self.rsampler._create_response_time_generators()
+        self.isampler.reset_time()
 
     def set_vehicle_allocation(self, vehicle_allocation):
         """ Assign custom allocation of vehicles to stations.
