@@ -511,9 +511,14 @@ class IncidentSampler():
         self.locations = {l: DemandLocation(l, building_probs[l])
                           for l in building_probs.keys()}
 
-    def _incident_time_generator(self):
+    def _incident_time_generator(self, period_length=60):
         """ Returns a generator object for incident times. """
+
+        counter = 0
+
         while True:
+
+            past_time = counter * len(self.lambdas) * period_length
 
             # process periods in sampling dict in one go
             n_arrivals = np.random.poisson(self.lambdas, size=len(self.lambdas))
@@ -523,12 +528,14 @@ class IncidentSampler():
                                 [[i]*n_arrivals[i] for i in range(len(n_arrivals))])],
                                dtype=int)
 
-            minutes = np.random.uniform(0, 60, size=total_arrivals)
-            times = np.sort(periods*60 + minutes)
+            minutes = np.random.uniform(0, period_length, size=total_arrivals)
+            times = np.sort(periods * period_length + minutes)
 
             # yield times one by one
             for time in times:
-                yield time
+                yield time + past_time
+
+            counter += 1
 
     def reset_time(self):
         """ Reset the incident time generator to start from t=0. """
