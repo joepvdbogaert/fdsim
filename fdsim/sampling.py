@@ -435,7 +435,7 @@ class IncidentSampler():
         return [v for v in merged["dim_incident_incident_type"].unique()
                 if str(v) not in ["nan", "NVT"]]
 
-    def _set_sampling_dict(self, start_time, end_time, incident_types):
+    def _set_sampling_dict(self, start_time, end_time, incident_types=None):
         """ Get the dictionary required for sampling from the predictor.
 
         Gets the sampling dictionary of a Predictor and stores it to the
@@ -452,9 +452,13 @@ class IncidentSampler():
         end_time: timestamp, str convertible to timestamp, or None
             The start date and time of the period to simulate. If None,
             use all available timestamps in the forecast.
-        incident_types: array-like of strings
-            The incident types to incorporate in the simulation.
+        incident_types: array-like of strings, optional (default: None)
+            The incident types to incorporate in the simulation. if None,
+            uses inferred incident types.
         """
+        if incident_types is None:
+            incident_types = self.types
+
         self.sampling_dict = self.predictor.create_sampling_dict(start_time, end_time,
                                                                  incident_types)
         self.T = len(self.sampling_dict)

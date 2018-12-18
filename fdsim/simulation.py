@@ -133,6 +133,7 @@ class Simulator():
                                         verbose=verbose)
 
         self.vehicles = self._create_vehicle_dict(vehicle_allocation)
+        self.reset_closing_times()
 
         self.dispatcher = ShortestDurationDispatcher(demand_locs=self.rsampler.location_coords,
                                                      station_locs=self.rsampler.station_coords,
@@ -146,7 +147,11 @@ class Simulator():
             self.start_time = start_time
         else:
             self.start_time = self.isampler.sampling_dict[0]["time"]
-        self.end_time = end_time
+        if end_time is not None:
+            self.end_time = end_time
+        else:
+            self.end_time = self.isampler.sampling_dict[
+                np.max(list(self.isampler.sampling_dict.keys()))]["time"]
 
         if self.verbose: print("Simulator is ready. At your service.")
 
@@ -253,7 +258,7 @@ class Simulator():
 
         return vehicle, estimated_time
 
-    def _update_vehicles(self, t):
+    def _update_vehicles(self, t, time):
         """ Return vehicles that finished their jobs to their base stations.
 
         Parameters
@@ -263,8 +268,23 @@ class Simulator():
             have become available again and can return to their bases.
         """
         for vehicle in self.vehicles.values():
+
             if not vehicle.available and vehicle.becomes_available < t:
                 vehicle.return_to_base()
+
+            station = vehicle.current_station
+            hour_of_day = time.hour
+            scd = self.station_closed_dict[station]
+
+            if scd[hour_of_day]:
+                # station is closed, force a dispatch to make it unavailable
+                minutes = t % 60
+                minutes_till_open = (scd["open_from"] > hour_of_day) * (scd["open_from"] - hour_of_day) * 60 - minutes + \
+                                    (scd["open_from"] < hour_of_day) * (24 - hour_of_day + scd["open_from"]) * 60 - minutes
+                vehicle.dispatch(
+                    self._get_station_coordinates(station),
+                    t + minutes_till_open
+                )
 
     def relocate_vehicle(self, vehicle_type, origin, destination):
         """ Relocate a vehicle form one station to another. The vehicle must be available and
@@ -307,6 +327,7 @@ class Simulator():
 
     def initialize_without_simulating(self, N=100000):
         self._initialize_log(N)
+        self.vehicles = self._create_vehicle_dict(self.vehicle_allocation)
         self.isampler.reset_time()
         self.t = 0
 
@@ -326,7 +347,7 @@ class Simulator():
         # sample incident and update status of vehicles at new time t
         self.t, time, type_, loc, prio, req_vehicles, func, dest = self._sample_incident()
 
-        self._update_vehicles(self.t)
+        self._update_vehicles(self.t, time)
 
         # sample dispatch time
         dispatch = self.rsampler.sample_dispatch_time(type_)
@@ -377,6 +398,61 @@ class Simulator():
 
         self._prepare_results()
         print("Simulated {} incidents. See Simulator.results for the results.".format(N))
+
+    def _simulate_single_period(self):
+        """ Simulate a specific period a single time.
+
+        Simulates a period specified by Simulator.
+        Returns
+        -------
+        results: pd.DataFrame,
+            The log of simulated incidents and deployments.
+        """
+        self.initialize_without_simulating()
+        # T = (pd.to_datetime(self.end_time) - pd.to_datetime(self.start_time)).seconds / 60
+        while self.t < self.isampler.T * 60:
+            self.simulate_single_incident()
+
+        self._prepare_results()
+        return self.results.copy()
+
+    def simulate_period(self, start_time=None, end_time=None, n=1):
+        """ Simulate a specific time period.
+
+        Parameters
+        ----------
+        start_time: Timestamp or str, opional (default: None)
+            The start time of the simulation. Must be somewhere in the interval with which
+            the simulator is initialized. If None, uses the start time with which the Simulator
+            is initialized.
+        end)time: Timestamp or str, opional (default: None)
+            The end time of the simulation. Must be somewhere in the interval with which
+            the simulator is initialized. If None, uses the end time with which the Simulator
+            is initialized.
+        n: int, optional (default: 1)
+            The number of runs, i.e., how many times to simulate the period.
+
+        Notes
+        -----
+        - The simulation is started from a "base" state for all n simulation runs. This means
+        all vehicles are available and at their base stations.
+        - An additional column (`experiment`) is added to the log/results, denoting the number
+        of the experiment.
+        """
+        if (start_time is not None) or (end_time is not None):
+            self.set_simulation_period(start_time, end_time)
+            print("Simulation period changed to {} till {}.".format(self.start_time, self.end_time))
+
+        logs = []
+        for i in range(n):
+            print("\rSimulating period: {} - {}. Run: {}/{}"
+                  .format(self.start_time, self.end_time, i + 1, n), end="")
+            log = self._simulate_single_period()
+            log["experiment"] = i + 1
+            logs.append(log)
+
+        self.results = pd.concat(logs, axis=0, ignore_index=True)
+        print("\nDone. See Simulator.results for the log.")
 
     def _initialize_log(self, N):
         """ Create an empty log.
@@ -509,8 +585,7 @@ class Simulator():
         vehicle_allocation.loc[station_name, vehicle_type] = number
         self.set_vehicle_allocation(vehicle_allocation)
 
-    def set_station_locations(self, station_locations, vehicle_allocation,
-                              station_names=None):
+    def set_station_locations(self, station_locations, vehicle_allocation, station_names=None):
         """ Assign custom locations of fire stations.
 
         Parameters
@@ -542,8 +617,7 @@ class Simulator():
 
         if self.verbose: print("Custom station locations set.")
 
-    def move_station(self, station_name, new_location, keep_name=True,
-                     keep_distributions=True, new_name=None):
+    def move_station(self, station_name, new_location, keep_name=True, keep_distributions=True, new_name=None):
         """ Move an existing station to a new location.
 
         Parameters
@@ -587,6 +661,77 @@ class Simulator():
         self.rsampler.reset_stations()
         self.dispatcher.reset_stations()
         self.set_vehicle_allocation(self.original_vehicle_allocation)
+
+    def set_start_time(self, start_time):
+        self.start_time = pd.to_datetime(start_time)
+        self._update_period()
+
+    def _update_period(self):
+        self.isampler._set_sampling_dict(self.start_time, self.end_time)
+        self.isampler.incident_time_generator = self.isampler._incident_time_generator()
+
+    def set_end_time(self, end_time):
+        self.end_time = pd.to_datetime(end_time)
+        self._update_period()
+
+    def reset_simulation_period(self):
+        self.isampler._set_sampling_dict(None, None)
+        self.isampler.incident_time_generator = self.isampler._incident_time_generator()
+        self.start_time = self.isampler.sampling_dict[0]["time"]
+        self.end_time = self.isampler.sampling_dict[self.isampler.T - 1]["time"]
+
+    def set_simulation_period(self, start_time, end_time):
+        """ Change the start and end times of the simulation period. """
+        if start_time is not None:
+            self.start_time = pd.to_datetime(start_time)
+        if end_time is not None:
+            self.end_time = pd.to_datetime(end_time)
+        if (start_time is not None) or (end_time is not None):
+            self._update_period()
+        else:
+            raise ValueError("Both start and end time are None values. "
+                             "Provide at least one of them.")
+
+    def set_daily_closing_time(self, station, closed_from, open_from, remove_previous=True):
+        """ Close a station every day for a specified time period.
+
+        Parameters
+        ----------
+        station: str,
+            The name of the station to close.
+        closed_from: int,
+            The hour of the day from which the station is closed.
+        open_from: int,
+            The hour of the day from which the station is open.
+        remove_previous: boolean, optional (default: True)
+            Whether to reset previously set any closing times.
+        """
+        if remove_previous:
+            self.remove_station_closing_time(station)
+
+        if open_from > closed_from:
+            closing_hours = np.arange(closed_from, open_from, 1)
+            for h in closing_hours:
+                self.station_closed_dict[station][h] = True
+
+        elif closed_from > open_from:
+            closing_hours = list(np.arange(0, open_from, 1)) + list(np.arange(closed_from, 24, 1))
+            for h in closing_hours:
+                self.station_closed_dict[station][h] = True
+
+        else:
+            raise ValueError("Open and closing time cannot be the same. Got open at {} "
+                             "and close at {}.".format(open_from, closed_from))
+
+        self.station_closed_dict[station]["open_from"] = open_from
+        self.station_closed_dict[station]["closed_from"] = closed_from
+        self.station_closed_dict[station]["length_closing_period"] = len(closing_hours)
+
+    def remove_station_closing_time(self, station):
+        self.station_closed_dict[station] = {i: False for i in range(24)}
+
+    def reset_closing_times(self):
+        self.station_closed_dict = {st: {i: False for i in range(24)} for st in self.vehicle_allocation["kazerne"]}
 
     def evaluate_performance(self, metric="on_time", vehicles=None, priorities=None,
                              group_by=None, by_incident=True):
