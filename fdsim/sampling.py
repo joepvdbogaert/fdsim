@@ -127,7 +127,7 @@ class ResponseTimeSampler():
                                          (self.data["inzet_terplaatse_volgnummer"] == 1)]
                                .copy())
         self.dispatch_rv_dict = fit_dispatch_times(self.high_prio_data)
-        self.turnout_time_rv_dict = fit_turnout_times(self.data,
+        self.turnout_time_rv_dict = fit_turnout_times(self.data, vehicle_types=vehicle_types,
                                                       volunteer_stations=volunteer_stations)
         self.travel_time_dict = model_travel_time_per_vehicle(self.high_prio_data)
         self.onscene_time_rv_dict = fit_onscene_times(self.data)
@@ -280,8 +280,10 @@ class ResponseTimeSampler():
         self.turnout_generators = {}
         for appointment in self.turnout_time_rv_dict.keys():
             self.turnout_generators[appointment] = {}
-            for prio, rv in self.turnout_time_rv_dict[appointment].items():
-                self.turnout_generators[appointment][prio] = time_generator(rv)
+            for prio in self.turnout_time_rv_dict[appointment].keys():
+                self.turnout_generators[appointment][prio] = {}
+                for vtype, rv in self.turnout_time_rv_dict[appointment][prio].items():
+                    self.turnout_generators[appointment][prio][vtype] = time_generator(rv)
 
         self.travel_time_noise_generators = {}
         for vehicle_type, v_dict in self.travel_time_dict.items():
@@ -364,7 +366,7 @@ class ResponseTimeSampler():
             dest = self.location_coords[location_id]
             _, estimated_time = get_osrm_distance_and_duration(orig, dest, osrm_host=osrm_host)
 
-        turnout = next(self.turnout_generators[appointment][prio])
+        turnout = next(self.turnout_generators[appointment][prio][vehicle_type])
         travel = self.sample_travel_time(estimated_time, vehicle_type)
         onscene = next(self.onscene_generators[incident_type][vehicle_type])
         return turnout, travel, onscene

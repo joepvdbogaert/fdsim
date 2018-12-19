@@ -479,10 +479,11 @@ def add_parttime_fulltime_indicator(data, station_col="inzet_kazerne_groep",
     return data
 
 
-def fit_turnout_times(data, prios=[1, 2, 3], rough_upper_bound=600, stations_to_exclude=None,
+def fit_turnout_times(data, prios=[1, 2, 3], vehicle_types=["TS", "RV", "HV", "WO"],
+                      rough_lower_bound=30, rough_upper_bound=600, stations_to_exclude=None,
                       station_col="inzet_kazerne_groep", volunteer_stations=None):
-    """ Fit a lognormal random variable to the dispatch time per
-        incident type.
+    """ Fit a lognormal random variable to the turn-out time per appointment
+    (fulltime/parttime), priority, and vehicle type.
 
     Parameters
     ----------
@@ -492,10 +493,10 @@ def fit_turnout_times(data, prios=[1, 2, 3], rough_upper_bound=600, stations_to_
         priority or 'volgnummer') must be done in advance.
     prios: array-like of int, optional (default: [1, 2, 3])
         The priority levels to fit turnout times for.
-    rough_upper_bound: int
-        Number of seconds to use as a rough upper bound filter, turn-out
-        times above this value are considered unrealistic/unreliable and
-        are removed before fitting. Defaults to 600 seconds (10 minutes).
+    rough_lower_bound, rough_upper_bound: int
+        Number of seconds to use as a rough lower and upper bound filter, turn-out
+        times outside these value are considered unrealistic/unreliable and
+        are removed before fitting. Defaults to 600 seconds (10 minutes) and 30 seconds.
     stations_to_exclude: array-like of str, optional (default: None)
         Stations to remove from the data before fitting. Some stations may
         imply invalid deployments (e.g, "Regio", "Onbekend"), which could
@@ -527,24 +528,30 @@ def fit_turnout_times(data, prios=[1, 2, 3], rough_upper_bound=600, stations_to_
                             ).dt.seconds
 
     # filter out unrealistic values
-    data = data[data["turnout_time"] <= rough_upper_bound].copy()
+    data = data[(data["turnout_time"] > rough_lower_bound) & 
+                (data["turnout_time"] <= rough_upper_bound)].copy()
 
     # fit variables per incident type (use backup rv if not enough samples)
     rv_dict = {}
     for appointment in ["fulltime", "parttime"]:
         df = data[data["fulltime"] == (appointment == "fulltime")]
-        backup_rv = fit_gamma_rv(df["turnout_time"],
-                                 floc=np.min(df["turnout_time"]) - 0.1,
-                                 scale=100)
+        backup_rv = fit_gamma_rv(df["turnout_time"], scale=100)
 
         df_rv_dict = {}
 
         for prio in prios:
-            X = df[df["dim_prioriteit_prio"] == prio]["turnout_time"]
-            if sample_size_sufficient(X):
-                df_rv_dict[prio] = fit_gamma_rv(X, floc=np.min(X)-0.1, scale=100)
-            else:
-                df_rv_dict[prio] = copy.deepcopy(backup_rv)
+            df_prio = df[df["dim_prioriteit_prio"] == prio]
+            prio_backup_rv = fit_gamma_rv(df["turnout_time"], scale=100)
+
+            prio_rv_dict = {}
+            for vtype in vehicle_types:
+                X = df[df["voertuig_groep"] == vtype]["turnout_time"]
+                if sample_size_sufficient(X):
+                    prio_rv_dict[vtype] = fit_gamma_rv(X, scale=100)
+                else:
+                    prio_rv_dict[vtype] = copy.deepcopy(prio_backup_rv)
+
+            df_rv_dict[prio] = prio_rv_dict.copy()
 
         rv_dict[appointment] = df_rv_dict.copy()
 
