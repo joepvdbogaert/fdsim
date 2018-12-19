@@ -108,11 +108,10 @@ class Simulator():
                  load_response_data=True, load_time_matrix=True, save_response_data=False,
                  save_time_matrix=False, vehicle_types=["TS", "RV", "HV", "WO"],
                  predictor="prophet", start_time=None, end_time=None, data_dir="data",
-                 auto_assign_backups=True, osrm_host="http://192.168.56.101:5000",
-                 location_col="hub_vak_bk", verbose=True):
+                 osrm_host="http://192.168.56.101:5000", location_col="hub_vak_bk",
+                 verbose=True):
 
         self.data_dir = data_dir
-        self.auto_assign_backups = auto_assign_backups
         self.verbose = verbose
         self.station_data = stations
         self.vehicle_allocation = self._preprocess_vehicle_allocation(vehicle_allocation)
@@ -238,8 +237,6 @@ class Simulator():
                                     and v.base_station == station]
                         if len(other_ts) > 0:
                             appointment = "parttime"
-                            if self.auto_assign_backups:
-                                backup_for = other_ts[0].id
 
                 coords = self._get_station_coordinates(station)
 
@@ -249,12 +246,35 @@ class Simulator():
                     station,
                     appointment=appointment,
                     coords=coords,
-                    backup_for=backup_for
                 )
 
                 id_counter += 1
 
         return vdict
+
+    def assign_backup_crew(self, station):
+        """ Let the part time crew at a station come to the station when the full time crew
+        is dispatched in order to minimize response times for a second incident.
+
+        Parameters
+        ----------
+        station: str,
+            The station for which to use the backup protocol.
+
+        Notes
+        -----
+        Make sure to provide the station name in all capitalized letters (e.g., 'VICTOR').
+        Currently only looks at TS type vehicles.
+        """
+        assert self.station_appointments[station] == "mixed", \
+            "This method is only applicable to stations with both full and part timecrews."
+        assert len(self.base_vehicles[station]["TS"]) > 1, \
+            "Station must have at least 2 TS vehicles"
+
+        tss = [self.vehicles[vid] for vid in self.base_vehicles[station]["TS"]]
+        fulltime_ts = [ts.id for ts in tss if ts.base_appointment == "fulltime"][0]
+        parttime_ts = [ts.id for ts in tss if ts.base_appointment == "parttime"][0]
+        self.vehicles[parttime_ts].assign_as_backup_for(fulltime_ts)
 
     def _get_coordinates(self, demand_location):
         """ Get the coordinates of a demand location.
