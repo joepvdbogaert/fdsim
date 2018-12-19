@@ -449,7 +449,38 @@ def fit_dispatch_times(data, rough_upper_bound=600):
     return rv_dict
 
 
-def fit_turnout_times(data, station_names=None, rough_upper_bound=600, types_only=False):
+def add_parttime_fulltime_indicator(data, station_col="inzet_kazerne_groep",
+                                    volunteer_stations=None):
+    """ Add a column to the data, indicating whether it is a fulltime manned
+    station or a parttime (volunteer) station.
+
+    Parameters
+    ----------
+    data: pd.DataFrame
+        The data to add the column to.
+    station_col: str, optional (default: "inzet_kazerne_groep")
+        The column indicating the station responsible for the deployment.
+    volunteer_stations: array-like of strings, optional,
+        The station names (all uppercases) of the stations that are parttime.
+
+    Returns
+    -------
+    data: pd.DataFrame
+        The data with an added boolean column "fulltime".
+    """
+    stations = data[station_col].unique()
+    is_full_time_station = {station: True for station in stations}
+
+    if volunteer_stations is not None:
+        for station in volunteer_stations:
+            is_full_time_station[station] = False
+
+    data["fulltime"] = data[station_col].apply(lambda x: is_full_time_station[x])
+    return data
+
+
+def fit_turnout_times(data, prios=[1, 2, 3], rough_upper_bound=600, stations_to_exclude=None,
+                      station_col="inzet_kazerne_groep", volunteer_stations=None):
     """ Fit a lognormal random variable to the dispatch time per
         incident type.
 
@@ -459,28 +490,36 @@ def fit_turnout_times(data, station_names=None, rough_upper_bound=600, types_onl
         Merged log of deployments and incidents. All deployments in
         the data will be used for fitting, so any filtering (e.g., on
         priority or 'volgnummer') must be done in advance.
-    station_names: array-like of strings
-        Names of the stations to fit turnout times for. Must match the
-        names in data["inzet_kazerne_groep"]. If None, use all stations
-        in the data.
+    prios: array-like of int, optional (default: [1, 2, 3])
+        The priority levels to fit turnout times for.
     rough_upper_bound: int
         Number of seconds to use as a rough upper bound filter, turn-out
         times above this value are considered unrealistic/unreliable and
-        are removed before fitting. DEfaults to 600 seconds (10 minutes).
+        are removed before fitting. Defaults to 600 seconds (10 minutes).
+    stations_to_exclude: array-like of str, optional (default: None)
+        Stations to remove from the data before fitting. Some stations may
+        imply invalid deployments (e.g, "Regio", "Onbekend"), which could
+        influence the turnout times.
+    station_col: str, optional (default: "inzet_kazerne_groep")
+        The column in data that holds the station responsible for the deployment.
+    volunteer_stations: array-like of str, optional (default: None)
+        The names of the stations that are run by volunteers. These are fitted
+        separately from full time stations.
 
     Returns
     -------
-    A dictionary like {'station' -> {'incident type' ->
-    'scipy.stats.gamma object'}}.
+    A dictionary like {'prio' -> {'parttime' ->
+    'scipy.stats.gamma object', 'fulltime' -> 'scipy.stats.gamma object'}}.
     """
 
     # filter stations
-    data["inzet_kazerne_groep"] = data["inzet_kazerne_groep"].str.upper()
-    if station_names is not None:
-        station_names = pd.Series(station_names).str.upper()
-        data = data[np.isin(data["inzet_kazerne_groep"], station_names)].copy()
-    else:
-        station_names = data["inzet_kazerne_groep"].unique()
+    data[station_col] = data[station_col].str.upper()
+    if stations_to_exclude:
+        data = data[~np.isin(data[station_col], stations_to_exclude)]
+
+    # add full time or part time indicator
+    data = add_parttime_fulltime_indicator(data, station_col=station_col,
+                                           volunteer_stations=volunteer_stations)
 
     # calculate dispatch times
     data["turnout_time"] = (pd.to_datetime(data["inzet_uitgerukt_datumtijd"], dayfirst=True) -
@@ -491,49 +530,25 @@ def fit_turnout_times(data, station_names=None, rough_upper_bound=600, types_onl
     data = data[data["turnout_time"] <= rough_upper_bound].copy()
 
     # fit variables per incident type (use backup rv if not enough samples)
-    types = data["dim_incident_incident_type"].unique()
     rv_dict = {}
-
-    if types_only:
-        backup_rv = fit_gamma_rv(data["turnout_time"],
-                                 floc=np.min(data["turnout_time"]) - 0.1,
+    for appointment in ["fulltime", "parttime"]:
+        df = data[data["fulltime"] == (appointment == "fulltime")]
+        backup_rv = fit_gamma_rv(df["turnout_time"],
+                                 floc=np.min(df["turnout_time"]) - 0.1,
                                  scale=100)
-        rv_dict = {}
-        for type_ in types:
-            X = data[data["dim_incident_incident_type"] == type_]["turnout_time"]
+
+        df_rv_dict = {}
+
+        for prio in prios:
+            X = df[df["dim_prioriteit_prio"] == prio]["turnout_time"]
             if sample_size_sufficient(X):
-                rv_dict[type_] = fit_gamma_rv(X,
-                                              floc=np.min(X)-0.1,
-                                              scale=100)
+                df_rv_dict[prio] = fit_gamma_rv(X, floc=np.min(X)-0.1, scale=100)
             else:
-                rv_dict[type_] = copy.deepcopy(backup_rv)
+                df_rv_dict[prio] = copy.deepcopy(backup_rv)
 
-        return rv_dict
+        rv_dict[appointment] = df_rv_dict.copy()
 
-    else:
-        for station in station_names:
-
-            # backup random variable per station
-            dfstation = data[data["inzet_kazerne_groep"] == station]
-            station_backup_rv = fit_gamma_rv(dfstation["turnout_time"],
-                                             floc=np.min(dfstation["turnout_time"]) - 0.1,
-                                             scale=100)
-
-            # create dict with entry for every type with station-specific data
-            station_rv_dict = {}
-
-            for type_ in types:
-                X = dfstation[dfstation["dim_incident_incident_type"] == type_]["turnout_time"]
-                if sample_size_sufficient(X):
-                    station_rv_dict[type_] = fit_gamma_rv(X,
-                                                          floc=np.min(X)-0.1,
-                                                          scale=100)
-                else:
-                    station_rv_dict[type_] = copy.deepcopy(station_backup_rv)
-
-            rv_dict[station] = station_rv_dict.copy()
-
-        return rv_dict
+    return rv_dict
 
 
 def fit_onscene_times(data, vehicles=["TS", "HV", "RV", "WO"], rough_lower_bound=60,

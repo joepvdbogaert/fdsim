@@ -17,7 +17,8 @@ class Vehicle():
         of the vehicle.
     """
 
-    def __init__(self, id_, vehicle_type, base_station, coords=None):
+    def __init__(self, id_, vehicle_type, base_station, appointment="fulltime",
+                 coords=None, backup_for=None):
         self.id = id_
         self.type = vehicle_type
         self.current_station = base_station
@@ -26,6 +27,10 @@ class Vehicle():
         self.base_coords = coords
         self.coords = coords
         self.becomes_available = 0
+        self.appointment = appointment
+        self.base_appointment = appointment
+        self.backup_for = backup_for
+        self.is_backup = (backup_for is not None)
 
     def dispatch(self, coords, t_available):
         self.coords = coords
@@ -40,6 +45,20 @@ class Vehicle():
     def relocate(self, station, coords):
         self.current_station = station
         self.coords = coords
+
+    def is_at_base(self):
+        return self.current_station == self.base_station
+
+    def available_at_base(self):
+        return (self.current_station == self.base_station) * self.available
+
+    def assign_as_backup_for(self, vehicle_id):
+        self.backup_for = vehicle_id
+        self.is_backup = True
+
+    def remove_backup_task(self):
+        self.backup_for = None
+        self.is_backup = False
 
 
 class DemandLocation():

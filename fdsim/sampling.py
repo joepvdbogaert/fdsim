@@ -66,7 +66,8 @@ class ResponseTimeSampler():
 
     def fit(self, incidents=None, deployments=None, stations=None,
             vehicle_types=["TS", "RV", "HV", "WO"], osrm_host="http://192.168.56.101:5000",
-            save_prepared_data=False, location_col="hub_vak_bk"):
+            save_prepared_data=False, location_col="hub_vak_bk",
+            volunteer_stations=["DRIEMOND", "DUIVENDRECHT", "AMSTELVEEN VRIJWILLIG"]):
         """ Fit random variables related to response time.
 
         Parameters
@@ -89,6 +90,10 @@ class ResponseTimeSampler():
         location_col: str
             The name of the column that specifies the demand locations, defaults
             to "hub_vak_bk".
+        volunteer_stations: array-like of str, optional (default: None)
+            The names of the stations that are run by volunteers. Turn-out times
+            are fitted separately for these stations, since volunteers have to travel
+            to the station first.
 
         Notes
         -----
@@ -122,7 +127,8 @@ class ResponseTimeSampler():
                                          (self.data["inzet_terplaatse_volgnummer"] == 1)]
                                .copy())
         self.dispatch_rv_dict = fit_dispatch_times(self.high_prio_data)
-        self.turnout_time_rv_dict = fit_turnout_times(self.high_prio_data)
+        self.turnout_time_rv_dict = fit_turnout_times(self.data,
+                                                      volunteer_stations=volunteer_stations)
         self.travel_time_dict = model_travel_time_per_vehicle(self.high_prio_data)
         self.onscene_time_rv_dict = fit_onscene_times(self.data)
 
@@ -189,13 +195,6 @@ class ResponseTimeSampler():
             self.station_coords[station_names[i]] = \
                 self.location_coords[station_locations[i]]
 
-        # set turnout times (since these were station-dependent)
-        overall_turnout_dict = fit_turnout_times(self.high_prio_data, types_only=True)
-        self.turnout_time_rv_dict = {}
-        for station in station_names:
-            self.turnout_time_rv_dict[station] = overall_turnout_dict
-        self._create_response_time_generators()
-
     def move_station(self, station_name, new_location, new_name, keep_distributions):
         """ Move the location of a single station.
 
@@ -220,7 +219,7 @@ class ResponseTimeSampler():
         else:
             raise ValueError("new_location cannot be interpreted. Pass either a tuple of "
                              "decimal longitude and latitude or a string representing "
-                             "a demand lcoation.")
+                             "a demand location.")
 
         if keep_distributions:
             self.turnout_time_rv_dict[new_name] = copy.deepcopy(
@@ -239,8 +238,6 @@ class ResponseTimeSampler():
         """ Reset the station locations and names to those obtained from the data. """
         self.location_coords, self.station_coords = \
             get_coordinates_locations_stations(self.data, location_col=self.location_col)
-        self.turnout_time_rv_dict = fit_turnout_times(self.high_prio_data)
-        self._create_response_time_generators()
 
     def _create_response_time_generators(self):
         """ Create generator objects for every element of response time.
@@ -281,10 +278,10 @@ class ResponseTimeSampler():
             self.dispatch_generators[incident_type] = time_generator(rv)
 
         self.turnout_generators = {}
-        for station in self.turnout_time_rv_dict.keys():
-            self.turnout_generators[station] = {}
-            for incident_type, rv in self.turnout_time_rv_dict[station].items():
-                self.turnout_generators[station][incident_type] = time_generator(rv)
+        for appointment in self.turnout_time_rv_dict.keys():
+            self.turnout_generators[appointment] = {}
+            for prio, rv in self.turnout_time_rv_dict[appointment].items():
+                self.turnout_generators[appointment][prio] = time_generator(rv)
 
         self.travel_time_noise_generators = {}
         for vehicle_type, v_dict in self.travel_time_dict.items():
@@ -335,7 +332,8 @@ class ResponseTimeSampler():
         return d["a"] + d["b"] * noise * estimated_time
 
     def sample_response_time(self, incident_type, location_id, station_name, vehicle_type,
-                             estimated_time=None, osrm_host="http://192.168.56.101:5000"):
+                             appointment, prio, estimated_time=None,
+                             osrm_host="http://192.168.56.101:5000"):
         """ Sample a random response time based on deployment characteristics.
 
         Parameters
@@ -366,7 +364,7 @@ class ResponseTimeSampler():
             dest = self.location_coords[location_id]
             _, estimated_time = get_osrm_distance_and_duration(orig, dest, osrm_host=osrm_host)
 
-        turnout = next(self.turnout_generators[station_name][incident_type])
+        turnout = next(self.turnout_generators[appointment][prio])
         travel = self.sample_travel_time(estimated_time, vehicle_type)
         onscene = next(self.onscene_generators[incident_type][vehicle_type])
         return turnout, travel, onscene

@@ -75,47 +75,49 @@ class Simulator():
     ```
     """
     # the target response times
-    target_dict = {'Bijeenkomstfunctie' : 10,
-                   'Industriefunctie' : 8,
-                   'Woonfunctie' : 8,
-                   'Straat' : 10,
-                   'Overige gebruiksfunctie' : 10,
-                   'Kantoorfunctie' : 10,
-                   'Logiesfunctie' : 8,
-                   'Onderwijsfunctie' : 8,
-                   'Grachtengordel' : 10,
-                   'Overig' : 10,
-                   'Winkelfunctie' : 5,
-                   'Kanalen en rivieren' : 10,
-                   'nan' : 10,
-                   'Trein' : 5,
-                   'Sportfunctie' : 10,
-                   'Regionale weg' : 10,
-                   'Celfunctie' : 5,
-                   'Tram' : 5,
+    target_dict = {'Bijeenkomstfunctie': 10,
+                   'Industriefunctie': 8,
+                   'Woonfunctie': 8,
+                   'Straat': 10,
+                   'Overige gebruiksfunctie': 10,
+                   'Kantoorfunctie': 10,
+                   'Logiesfunctie': 8,
+                   'Onderwijsfunctie': 8,
+                   'Grachtengordel': 10,
+                   'Overig': 10,
+                   'Winkelfunctie': 5,
+                   'Kanalen en rivieren': 10,
+                   'nan': 10,
+                   'Trein': 5,
+                   'Sportfunctie': 10,
+                   'Regionale weg': 10,
+                   'Celfunctie': 5,
+                   'Tram': 5,
                    'Metro': 5,
-                   'Sloten en Vaarten' : 10,
-                   'Gezondheidszorgfunctie' : 8,
-                   'Lokale weg' : 5,
-                   'Polders' : 10,
-                   'Haven' : 10,
-                   'Autosnelweg' : 10,
-                   'Meren en plassen' : 10,
-                   'Hoofdweg' : 10,
+                   'Sloten en Vaarten': 10,
+                   'Gezondheidszorgfunctie': 8,
+                   'Lokale weg': 5,
+                   'Polders': 10,
+                   'Haven': 10,
+                   'Autosnelweg': 10,
+                   'Meren en plassen': 10,
+                   'Hoofdweg': 10,
                    'unknown': 10}
 
     def __init__(self, incidents, deployments, stations, vehicle_allocation,
                  load_response_data=True, load_time_matrix=True, save_response_data=False,
                  save_time_matrix=False, vehicle_types=["TS", "RV", "HV", "WO"],
                  predictor="prophet", start_time=None, end_time=None, data_dir="data",
-                 osrm_host="http://192.168.56.101:5000", location_col="hub_vak_bk",
-                 verbose=True):
+                 auto_assign_backups=True, osrm_host="http://192.168.56.101:5000",
+                 location_col="hub_vak_bk", verbose=True):
 
         self.data_dir = data_dir
+        self.auto_assign_backups = auto_assign_backups
         self.verbose = verbose
-        self.stations = stations
+        self.station_data = stations
         self.vehicle_allocation = self._preprocess_vehicle_allocation(vehicle_allocation)
         self.original_vehicle_allocation = self.vehicle_allocation.copy()
+        self.station_appointments = self._create_appointment_dict(self.vehicle_allocation)
 
         self.rsampler = ResponseTimeSampler(load_data=load_response_data,
                                             data_dir=self.data_dir,
@@ -132,8 +134,9 @@ class Simulator():
                                         fc_dir=os.path.join(data_dir),
                                         verbose=verbose)
 
-        self.vehicles = self._create_vehicle_dict(vehicle_allocation)
-        self.reset_closing_times()
+        self.vehicles = self._create_vehicle_dict(self.vehicle_allocation)
+        self.base_vehicles = self._create_base_vehicle_dict()
+        self.reset_station_status_cycles()
 
         self.dispatcher = ShortestDurationDispatcher(demand_locs=self.rsampler.location_coords,
                                                      station_locs=self.rsampler.station_coords,
@@ -168,7 +171,30 @@ class Simulator():
         vehicle_allocation["kazerne"] = vehicle_allocation["kazerne"].str.upper()
         vehicle_allocation.rename(columns={"#WO": "WO", "#TS": "TS", "#RV": "RV", "#HV": "HV"},
                                   inplace=True)
+
+        if "appointment" not in vehicle_allocation.columns:
+            appointment_map = {"Beroeps": "fulltime", "Vrijwilligers": "parttime",
+                               "Beroeps + vrijwilligers": "mixed"}
+
+            vehicle_allocation["appointment"] = (vehicle_allocation["Bezetting"]
+                                                 .map(appointment_map))
+
+            vehicle_allocation.drop("Bezetting", axis=1, inplace=True)
+
         return vehicle_allocation
+
+    @staticmethod
+    def _create_appointment_dict(vehicle_allocation):
+        """ Create a dictionary of {station -> appointment}. """
+        return {kaz: appoint for kaz, appoint in zip(vehicle_allocation["kazerne"].values,
+                vehicle_allocation["appointment"].values)}
+
+    def _create_base_vehicle_dict(self):
+        """ Create a dictionary of {station -> [vehicle ids]}. """
+        types = np.unique([v.type for v in self.vehicles.values()])
+        return {s: {type_: [v.id for v in self.vehicles.values() if (v.base_station == s) and
+                    (v.type == type_)] for type_ in types}
+                for s in self.vehicle_allocation["kazerne"].unique()}
 
     def _create_vehicle_dict(self, vehicle_allocation):
         """ Create a dictionary of Vehicle objects from the station data.
@@ -178,22 +204,54 @@ class Simulator():
         vehicle_allocation: pd.DataFrame
             The allocation of vehicles to stations. Column names should represent
             vehicle types, except for one column named 'kazerne', which specifies the
-            station names. Values are the number of vehicles assigned to the station.
+            station names, and a column named 'Bezetting', which specifies whether the
+            station is stationed by 'Beroeps', 'Vrijwilligers', or 'Beroeps + vrijwilligers'.
+            Values are the number of vehicles assigned to the station.
 
         Returns
         -------
         A dictionary like: {'vehicle id' -> Vehicle object}.
         """
         vehicle_allocation = self._preprocess_vehicle_allocation(vehicle_allocation)
+        appoint_dict = self._create_appointment_dict(vehicle_allocation)
+        vehicle_allocation = vehicle_allocation.drop("appointment", axis=1)
         vs = vehicle_allocation.set_index("kazerne").unstack().reset_index()
+
         vdict = {}
         id_counter = 1
+
         for r in range(len(vs)):
+
             for _ in range(vs[0].iloc[r]):
-                coords = self._get_station_coordinates(vs["kazerne"].iloc[r])
+
                 this_id = "VEHICLE " + str(id_counter)
-                vdict[this_id] = Vehicle(this_id, vs["level_0"].iloc[r],
-                                         vs["kazerne"].iloc[r], coords)
+                vtype = vs["level_0"].iloc[r]
+                station = vs["kazerne"].iloc[r]
+                appointment = appoint_dict[station]
+                backup_for = None
+
+                if appointment == "mixed":
+                    appointment = "fulltime"
+                    # check if type is TS and if there are more TSs already
+                    if vtype == "TS":
+                        other_ts = [v for v in vdict.values() if v.type == "TS"
+                                    and v.base_station == station]
+                        if len(other_ts) > 0:
+                            appointment = "parttime"
+                            if self.auto_assign_backups:
+                                backup_for = other_ts[0].id
+
+                coords = self._get_station_coordinates(station)
+
+                vdict[this_id] = Vehicle(
+                    this_id,
+                    vtype,
+                    station,
+                    appointment=appointment,
+                    coords=coords,
+                    backup_for=backup_for
+                )
+
                 id_counter += 1
 
         return vdict
@@ -258,6 +316,27 @@ class Simulator():
 
         return vehicle, estimated_time
 
+    @staticmethod
+    def _calc_minutes_till_event(t, hour_of_day, hour_of_event):
+        """ Calculate the number of minutes till a certain hour of day.
+
+        Parameters
+        ----------
+        t: float,
+            Minutes since start of simulation, assuming the simulation started at
+            some O'clock time.
+        hour_of_event: int,
+            The hour of day of the event to calculate the time to.
+
+        Returns
+        -------
+        time: float,
+            The time in minutes from now (t) till the event.
+        """
+        minutes = t % 60
+        return (hour_of_event > hour_of_day)*(hour_of_event - hour_of_day)*60 - minutes + \
+               (hour_of_event < hour_of_day)*(24 - hour_of_day + hour_of_event)*60 - minutes
+
     def _update_vehicles(self, t, time):
         """ Return vehicles that finished their jobs to their base stations.
 
@@ -272,19 +351,53 @@ class Simulator():
             if not vehicle.available and vehicle.becomes_available < t:
                 vehicle.return_to_base()
 
-            station = vehicle.current_station
-            hour_of_day = time.hour
-            scd = self.station_closed_dict[station]
+            # available and at home station: look at daily status changes
+            if (vehicle.available) and (vehicle.is_at_base()):
+                station = vehicle.current_station
+                hour_of_day = time.hour
+                ssd = self.station_status_dict[station]
 
-            if scd[hour_of_day]:
-                # station is closed, force a dispatch to make it unavailable
-                minutes = t % 60
-                minutes_till_open = (scd["open_from"] > hour_of_day) * (scd["open_from"] - hour_of_day) * 60 - minutes + \
-                                    (scd["open_from"] < hour_of_day) * (24 - hour_of_day + scd["open_from"]) * 60 - minutes
-                vehicle.dispatch(
-                    self._get_station_coordinates(station),
-                    t + minutes_till_open
-                )
+                if ssd[hour_of_day] == "normal":
+                    vehicle.appointment = vehicle.base_appointment
+                    # upgrade to fulltime if relevant
+                    if vehicle.is_backup:
+                        if not self.vehicles[vehicle.backup_for].available:
+                            vehicle.appointment = "fulltime"
+
+                elif ssd[hour_of_day] == "closed":
+                    # station is closed, force a dispatch to make it unavailable
+                    minutes_till_open = self._calc_minutes_till_event(t, hour_of_day,
+                                                                      ssd["open_from"])
+                    vehicle.dispatch(
+                        self._get_station_coordinates(station),
+                        t + minutes_till_open
+                    )
+
+                elif ssd[hour_of_day] == "parttime":
+                    vehicle.appointment = "parttime"
+
+            # available and at other station: see if it should go home now
+            if (vehicle.available) and not (vehicle.is_at_base()):
+                base_vs = self.base_vehicles[vehicle.current_station][vehicle.type]
+                # send vehicles back to base recursively
+                if np.sum([self.vehicles[v].available_at_base() for v in base_vs]) > 0:
+                    self._send_vehicle_to_base_recursively(vehicle.id)
+
+    def _send_vehicle_to_base_recursively(self, vehicle_id):
+        """ Send a vehicle to it's base and send interim vehicles that may have relocated
+        there to their bases. Repeat recursively.
+        """
+        vehicle = self.vehicles[vehicle_id]
+        station = vehicle.base_station
+        vehicle.return_to_base()
+        # find other vehicles at station that can return to base
+        relocated_vehicles = [v.id for v in self.vehicles.values() if
+                              (v.current_station == station) and
+                              (v.type == vehicle.type) and
+                              (not v.is_at_base())]
+
+        for vehicle_id in relocated_vehicles:
+            self._send_vehicle_to_base_recursively(vehicle_id)
 
     def relocate_vehicle(self, vehicle_type, origin, destination):
         """ Relocate a vehicle form one station to another. The vehicle must be available and
@@ -335,7 +448,7 @@ class Simulator():
         """ Get the response time norm for a given incident. """
         if incident_type in ['Binnenbrand', 'Buitenbrand']:
             return self.target_dict[object_function] * 60
-        else: 
+        else:
             return 15 * 60
 
     def simulate_single_incident(self):
@@ -365,8 +478,8 @@ class Simulator():
                            turnout, travel, onscene, response, target, "EXTERNAL", "EXTERNAL"])
             else:
                 turnout, travel, onscene = self.rsampler.sample_response_time(
-                    type_, loc, vehicle.current_station, vehicle.type,
-                    estimated_time=estimated_time)
+                    type_, loc, vehicle.current_station, vehicle.type, vehicle.appointment,
+                    prio, estimated_time=estimated_time)
 
                 vehicle.dispatch(dest, self.t + (onscene/60) + (estimated_time/60))
 
@@ -402,7 +515,8 @@ class Simulator():
     def _simulate_single_period(self):
         """ Simulate a specific period a single time.
 
-        Simulates a period specified by Simulator.
+        Simulates a period specified by Simulator.start_time and Simulator.end_time.
+
         Returns
         -------
         results: pd.DataFrame,
@@ -441,14 +555,15 @@ class Simulator():
         """
         if (start_time is not None) or (end_time is not None):
             self.set_simulation_period(start_time, end_time)
-            print("Simulation period changed to {} till {}.".format(self.start_time, self.end_time))
+            print("Simulation period changed to {} till {}."
+                  .format(self.start_time, self.end_time))
 
         logs = []
         for i in range(n):
             print("\rSimulating period: {} - {}. Run: {}/{}"
                   .format(self.start_time, self.end_time, i + 1, n), end="")
             log = self._simulate_single_period()
-            log["experiment"] = i + 1
+            log["run"] = i + 1
             logs.append(log)
 
         self.results = pd.concat(logs, axis=0, ignore_index=True)
@@ -617,7 +732,8 @@ class Simulator():
 
         if self.verbose: print("Custom station locations set.")
 
-    def move_station(self, station_name, new_location, keep_name=True, keep_distributions=True, new_name=None):
+    def move_station(self, station_name, new_location, keep_name=True,
+                     keep_distributions=True, new_name=None):
         """ Move an existing station to a new location.
 
         Parameters
@@ -692,46 +808,56 @@ class Simulator():
             raise ValueError("Both start and end time are None values. "
                              "Provide at least one of them.")
 
-    def set_daily_closing_time(self, station, closed_from, open_from, remove_previous=True):
+    def set_daily_station_status(self, station, start_hour, end_hour, status="closed",
+                                 remove_previous=True):
         """ Close a station every day for a specified time period.
 
         Parameters
         ----------
         station: str,
             The name of the station to close.
-        closed_from: int,
+        start_hour: int,
             The hour of the day from which the station is closed.
-        open_from: int,
+        end_hour: int,
             The hour of the day from which the station is open.
         remove_previous: boolean, optional (default: True)
             Whether to reset previously set any closing times.
         """
+        assert status in ["closed", "parttime"], \
+            "Status must be one of {}".format(["closed", "parttime"])
+
         if remove_previous:
-            self.remove_station_closing_time(station)
+            self.remove_station_status_cycle(station)
 
-        if open_from > closed_from:
-            closing_hours = np.arange(closed_from, open_from, 1)
-            for h in closing_hours:
-                self.station_closed_dict[station][h] = True
+        if end_hour > start_hour:
+            hours = np.arange(start_hour, end_hour, 1)
+            for h in hours:
+                self.station_status_dict[station][h] = status
 
-        elif closed_from > open_from:
-            closing_hours = list(np.arange(0, open_from, 1)) + list(np.arange(closed_from, 24, 1))
-            for h in closing_hours:
-                self.station_closed_dict[station][h] = True
+        elif start_hour > end_hour:
+            hours = list(np.arange(0, end_hour, 1)) + list(np.arange(start_hour, 24, 1))
+            for h in hours:
+                self.station_status_dict[station][h] = status
 
         else:
             raise ValueError("Open and closing time cannot be the same. Got open at {} "
-                             "and close at {}.".format(open_from, closed_from))
+                             "and close at {}.".format(end_hour, start_hour))
 
-        self.station_closed_dict[station]["open_from"] = open_from
-        self.station_closed_dict[station]["closed_from"] = closed_from
-        self.station_closed_dict[station]["length_closing_period"] = len(closing_hours)
+        if status == "closed":
+            keys = ["open_from", "closed_from", "length_closing_period"]
+        elif status == "parttime":
+            keys = ["fulltime_from", "parttime_from", "length_parttime_period"]
 
-    def remove_station_closing_time(self, station):
-        self.station_closed_dict[station] = {i: False for i in range(24)}
+        self.station_status_dict[station][keys[0]] = end_hour
+        self.station_status_dict[station][keys[1]] = start_hour
+        self.station_status_dict[station][keys[2]] = len(hours)
 
-    def reset_closing_times(self):
-        self.station_closed_dict = {st: {i: False for i in range(24)} for st in self.vehicle_allocation["kazerne"]}
+    def remove_station_status_cycle(self, station):
+        self.station_status_dict[station] = {i: "normal" for i in range(24)}
+
+    def reset_station_status_cycles(self):
+        self.station_status_dict = {st: {i: "normal" for i in range(24)}
+                                    for st in self.vehicle_allocation["kazerne"]}
 
     def evaluate_performance(self, metric="on_time", vehicles=None, priorities=None,
                              group_by=None, by_incident=True):
