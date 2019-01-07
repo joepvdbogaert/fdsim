@@ -195,7 +195,7 @@ class ResponseTimeSampler():
             self.station_coords[station_names[i]] = \
                 self.location_coords[station_locations[i]]
 
-    def move_station(self, station_name, new_location, new_name, keep_distributions):
+    def move_station(self, station_name, new_location, new_name):
         """ Move the location of a single station.
 
         Parameters
@@ -208,9 +208,6 @@ class ResponseTimeSampler():
             floats is passed, it is interpreted as the new coordinates in decimal (long, lat).
         new_name: str
             The new name of the station.
-        keep_distributions: boolean
-            If True, keep original turn-out time distribution. If False, use distribution
-            of all turn-out times (not station-dependent).
         """
         if isinstance(new_location, tuple):
             self.station_coords[new_name] = new_location
@@ -220,13 +217,6 @@ class ResponseTimeSampler():
             raise ValueError("new_location cannot be interpreted. Pass either a tuple of "
                              "decimal longitude and latitude or a string representing "
                              "a demand location.")
-
-        if keep_distributions:
-            self.turnout_time_rv_dict[new_name] = copy.deepcopy(
-                self.turnout_time_rv_dict[station_name])
-        else:
-            turnout_dict = fit_turnout_times(self.high_prio_data, types_only=True)
-            self.turnout_time_rv_dict[new_name] = turnout_dict
 
         if new_name != station_name:
             del self.station_coords[station_name]
