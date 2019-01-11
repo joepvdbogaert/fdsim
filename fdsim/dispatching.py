@@ -187,7 +187,7 @@ class ShortestDurationDispatcher(BaseDispatcher):
         if len(candidate_vehicles) > 0:
             # save IDs and locations as lists
             vehicle_ids = np.array([v.id for v in candidate_vehicles], dtype=str)
-            vehicle_locs = np.array([v.current_station for v in candidate_vehicles], dtype=str)
+            vehicle_locs = np.array([v.current_station_name for v in candidate_vehicles], dtype=str)
             # create subset of time_matrix corresponding to available vehicles
             mask = np.in1d(self.station_names, vehicle_locs)
             dest_idx = np.nonzero(self.matrix_names == destination_loc)[0][0]

@@ -4,7 +4,7 @@ import pandas as pd
 import pickle
 
 from fdsim.sampling import IncidentSampler, ResponseTimeSampler
-from fdsim.objects import Vehicle
+from fdsim.objects import Vehicle, FireStation
 from fdsim.dispatching import ShortestDurationDispatcher
 
 
@@ -19,9 +19,10 @@ class Simulator():
         The deployment data.
     stations: pd.DataFrame
         The station information including coordinates and station names.
-    vehicle_allocation: pd.DataFrame
-        The allocation of vehicles to stations. Expected columns:
-        ["kazerne", "#TS", "#RV", "#HV", "#WO"].
+    resource_allocation: pd.DataFrame
+        The allocation of vehicles and crews to stations. Expected columns:
+        ["kazerne", "TS", "RV", "HV", "WO", "TS_crew_ft", "TS_crew_pt", "RVHV_crew_ft",
+         "RVHV_crew_pt", "WO_crew_ft", "WO_crew_pt"].
     load_response_data: boolean, optional
         Whether to load preprocessed response data from disk (True) or to
         calculate it using OSRM.
@@ -59,7 +60,7 @@ class Simulator():
     Examples
     --------
     >>> from simulation import Simulator
-    >>> sim = Simulator(incidents, deployments, stations, vehicle_allocation)
+    >>> sim = Simulator(incidents, deployments, stations, resource_allocation)
     >>> sim.simulate_n_incidents(10000)
     >>> sim.save_log("simulation_results.csv")
 
@@ -104,7 +105,7 @@ class Simulator():
                    'Hoofdweg': 10,
                    'unknown': 10}
 
-    def __init__(self, incidents, deployments, stations, vehicle_allocation,
+    def __init__(self, incidents, deployments, stations, resource_allocation,
                  load_response_data=True, load_time_matrix=True, save_response_data=False,
                  save_time_matrix=False, vehicle_types=["TS", "RV", "HV", "WO"],
                  predictor="prophet", start_time=None, end_time=None, data_dir="data",
@@ -114,9 +115,9 @@ class Simulator():
         self.data_dir = data_dir
         self.verbose = verbose
         self.station_data = stations
-        self.vehicle_allocation = self._preprocess_vehicle_allocation(vehicle_allocation)
-        self.original_vehicle_allocation = self.vehicle_allocation.copy()
-        self.station_appointments = self._create_appointment_dict(self.vehicle_allocation)
+        self.vehicle_types = vehicle_types
+        self.resource_allocation = self._preprocess_resource_allocation(resource_allocation)
+        self.original_resource_allocation = self.resource_allocation.copy()
 
         self.rsampler = ResponseTimeSampler(load_data=load_response_data,
                                             data_dir=self.data_dir,
@@ -133,9 +134,9 @@ class Simulator():
                                         fc_dir=os.path.join(data_dir),
                                         verbose=verbose)
 
-        self.vehicles = self._create_vehicle_dict(self.vehicle_allocation)
-        self.base_vehicles = self._create_base_vehicle_dict()
-        self.reset_station_status_cycles()
+        self.vehicles = self._create_vehicles(self.resource_allocation)
+        self.stations = self._create_stations(self.resource_allocation)
+        self._add_base_stations_to_vehicles()
 
         self.dispatcher = ShortestDurationDispatcher(demand_locs=self.rsampler.location_coords,
                                                      station_locs=self.rsampler.station_coords,
@@ -158,62 +159,26 @@ class Simulator():
         if self.verbose: print("Simulator is ready. At your service.")
 
     @staticmethod
-    def _preprocess_vehicle_allocation(vehicle_allocation):
-        """ Pre-process the vehicle allocation dataframe to ensure consistency. """
+    def _preprocess_resource_allocation(resource_allocation):
+        """ Preprocess the resource allocation table. """
+        resource_allocation["kazerne"] = resource_allocation["kazerne"].str.upper()
+        return resource_allocation
 
-        # if 'kazerne' is not a column, use index as station names
-        if "kazerne" not in vehicle_allocation.columns:
-            station_col = vehicle_allocation.index.name
-            vehicle_allocation.reset_index(inplace=True, drop=False)
-            vehicle_allocation.rename(columns={station_col: "kazerne"}, inplace=True)
-
-        vehicle_allocation["kazerne"] = vehicle_allocation["kazerne"].str.upper()
-        vehicle_allocation.rename(columns={"#WO": "WO", "#TS": "TS", "#RV": "RV", "#HV": "HV"},
-                                  inplace=True)
-
-        if "appointment" not in vehicle_allocation.columns:
-            appointment_map = {"Beroeps": "fulltime", "Vrijwilligers": "parttime",
-                               "Beroeps + vrijwilligers": "mixed"}
-
-            vehicle_allocation["appointment"] = (vehicle_allocation["Bezetting"]
-                                                 .map(appointment_map))
-
-            vehicle_allocation.drop("Bezetting", axis=1, inplace=True)
-
-        return vehicle_allocation
-
-    @staticmethod
-    def _create_appointment_dict(vehicle_allocation):
-        """ Create a dictionary of {station -> appointment}. """
-        return {kaz: appoint for kaz, appoint in zip(vehicle_allocation["kazerne"].values,
-                vehicle_allocation["appointment"].values)}
-
-    def _create_base_vehicle_dict(self):
-        """ Create a dictionary of {station -> [vehicle ids]}. """
-        types = np.unique([v.type for v in self.vehicles.values()])
-        return {s: {type_: [v.id for v in self.vehicles.values() if (v.base_station == s) and
-                    (v.type == type_)] for type_ in types}
-                for s in self.vehicle_allocation["kazerne"].unique()}
-
-    def _create_vehicle_dict(self, vehicle_allocation):
-        """ Create a dictionary of Vehicle objects from the station data.
+    def _create_vehicles(self, resource_allocation):
+        """ Create a dictionary of Vehicle objects from the resource data.
 
         Parameters
         ----------
-        vehicle_allocation: pd.DataFrame
-            The allocation of vehicles to stations. Column names should represent
-            vehicle types, except for one column named 'kazerne', which specifies the
-            station names, and a column named 'Bezetting', which specifies whether the
-            station is stationed by 'Beroeps', 'Vrijwilligers', or 'Beroeps + vrijwilligers'.
-            Values are the number of vehicles assigned to the station.
+        resource_allocation: pd.DataFrame
+            The allocation of resources (including vehicles) to stations. Should at least
+            contain the columns ["kazerne", "TS", "RV", "HV", "WO"].Values are the number
+            of vehicles assigned to the station.
 
         Returns
         -------
         A dictionary like: {'vehicle id' -> Vehicle object}.
         """
-        vehicle_allocation = self._preprocess_vehicle_allocation(vehicle_allocation)
-        appoint_dict = self._create_appointment_dict(vehicle_allocation)
-        vehicle_allocation = vehicle_allocation.drop("appointment", axis=1)
+        vehicle_allocation = resource_allocation[["kazerne", "TS", "RV", "HV", "WO"]].copy()
         vs = vehicle_allocation.set_index("kazerne").unstack().reset_index()
 
         vdict = {}
@@ -226,25 +191,12 @@ class Simulator():
                 this_id = "VEHICLE " + str(id_counter)
                 vtype = vs["level_0"].iloc[r]
                 station = vs["kazerne"].iloc[r]
-                appointment = appoint_dict[station]
-                backup_for = None
-
-                if appointment == "mixed":
-                    appointment = "fulltime"
-                    # check if type is TS and if there are more TSs already
-                    if vtype == "TS":
-                        other_ts = [v for v in vdict.values() if v.type == "TS"
-                                    and v.base_station == station]
-                        if len(other_ts) > 0:
-                            appointment = "parttime"
-
                 coords = self._get_station_coordinates(station)
 
                 vdict[this_id] = Vehicle(
                     this_id,
                     vtype,
                     station,
-                    appointment=appointment,
                     coords=coords,
                 )
 
@@ -252,29 +204,70 @@ class Simulator():
 
         return vdict
 
-    def assign_backup_crew(self, station):
-        """ Let the part time crew at a station come to the station when the full time crew
-        is dispatched in order to minimize response times for a second incident.
+    def _create_stations(self, resource_allocation):
+        """ Initialize FireStation objects according to the resource allocation.
 
         Parameters
         ----------
-        station: str,
-            The station for which to use the backup protocol.
-
-        Notes
-        -----
-        Make sure to provide the station name in all capitalized letters (e.g., 'VICTOR').
-        Currently only looks at TS type vehicles.
+        resource_allocation: pd.DataFrame,
+            The resource allocation. Should at least contain the columns:
+            ["TS_crew_ft", "TS_crew_pt", "RVHV_crew_ft",
+             "RVHV_crew_pt", "WO_crew_ft", "WO_crew_pt"]
+ 
+        Returns
+        -------
+        Stations: dict,
+            A dictionary like {'station name' -> fdsim.objects.FireStation object}.
         """
-        assert self.station_appointments[station] == "mixed", \
-            "This method is only applicable to stations with both full and part timecrews."
-        assert len(self.base_vehicles[station]["TS"]) > 1, \
-            "Station must have at least 2 TS vehicles"
+        rs = resource_allocation
+        station_dict = {}
 
-        tss = [self.vehicles[vid] for vid in self.base_vehicles[station]["TS"]]
-        fulltime_ts = [ts.id for ts in tss if ts.base_appointment == "fulltime"][0]
-        parttime_ts = [ts.id for ts in tss if ts.base_appointment == "parttime"][0]
-        self.vehicles[parttime_ts].assign_as_backup_for(fulltime_ts)
+        for i in range(len(rs["kazerne"])):
+            station = rs["kazerne"].iloc[i]
+            coords = self._get_station_coordinates(station)
+            base_vehicles = [v for v in self.vehicles.values() if v.base_station_name == station]
+            crew_dict = {"TS": np.array([rs["TS_crew_ft"].iloc[i], rs["TS_crew_pt"].iloc[i]]),
+                         "RVHV": np.array([rs["RVHV_crew_ft"].iloc[i], rs["RVHV_crew_pt"].iloc[i]]),
+                         "WO": np.array([rs["WO_crew_ft"].iloc[i], rs["WO_crew_pt"].iloc[i]])}
+
+            station_dict[station] = FireStation(station, coords, base_vehicles, crew_dict)
+
+        return station_dict
+
+    # def assign_backup_crew(self, station):
+    #     """ Let the part time crew at a station come to the station when the full time crew
+    #     is dispatched in order to minimize response times for a second incident.
+
+    #     Parameters
+    #     ----------
+    #     station: str,
+    #         The station for which to use the backup protocol.
+
+    #     Notes
+    #     -----
+    #     Make sure to provide the station name in all capitalized letters (e.g., 'VICTOR').
+    #     Currently only looks at TS type vehicles.
+    #     """
+    #     assert self.station_appointments[station] == "mixed", \
+    #         "This method is only applicable to stations with both full and part time crews."
+    #     assert len(self.base_vehicles[station]["TS"]) > 1, \
+    #         "Station must have at least 2 TS vehicles"
+
+    #     tss = [self.vehicles[vid] for vid in self.base_vehicles[station]["TS"]]
+    #     fulltime_ts = [ts.id for ts in tss if ts.base_appointment == "fulltime"][0]
+    #     parttime_ts = [ts.id for ts in tss if ts.base_appointment == "parttime"][0]
+    #     self.vehicles[parttime_ts].assign_as_backup_for(fulltime_ts)
+
+    def _add_base_stations_to_vehicles(self):
+        """ After initializing stations and vehicles, assign FireStation objects to Vehicles
+        and the other way around.
+        """
+        for vehicle in self.vehicles.values():
+            vehicle.assign_base_station(self.stations[vehicle.base_station_name])
+
+        for station in self.stations.values():
+            station.assign_base_vehicles([v for v in self.vehicles.values() if
+                                          v.base_station_name == station.name])
 
     def _get_coordinates(self, demand_location):
         """ Get the coordinates of a demand location.
@@ -324,8 +317,8 @@ class Simulator():
         The Vehicle object of the chosen vehicle and the estimated travel time to
         the incident / demand location in seconds.
         """
-        candidates = [self.vehicles[v] for v in self.vehicles.keys() if
-                      self.vehicles[v].available and self.vehicles[v].type == vehicle_type]
+        candidates = [v for v in self.vehicles.values() if (v.type == vehicle_type)
+                      and v.available_for_deployment()]
 
         vehicle_id, estimated_time = self.dispatcher.dispatch(location, candidates)
 
@@ -366,58 +359,44 @@ class Simulator():
             The time since the start of the simulation. Determines which vehicles
             have become available again and can return to their bases.
         """
+        # return vehicles from deployments
         for vehicle in self.vehicles.values():
+            if (not vehicle.available) and (vehicle.becomes_available <= t):
+                crew_type = vehicle.current_crew
+                vehicle.return_to_last_station()
 
-            if not vehicle.available and vehicle.becomes_available < t:
-                vehicle.return_to_base()
+        # update station status and crew availability
+        for station in self.stations.values():
+            station.update_crew_status(time.weekday(), time.hour)
 
-            # available and at home station: look at daily status changes
-            if (vehicle.available) and (vehicle.is_at_base()):
-                station = vehicle.current_station
-                hour_of_day = time.hour
-                ssd = self.station_status_dict[station]
-
-                if ssd[hour_of_day] == "normal":
-                    vehicle.appointment = vehicle.base_appointment
-                    # upgrade to fulltime if relevant
-                    if vehicle.is_backup:
-                        if not self.vehicles[vehicle.backup_for].available:
-                            vehicle.appointment = "fulltime"
-
-                elif ssd[hour_of_day] == "closed":
-                    # station is closed, force a dispatch to make it unavailable
-                    minutes_till_open = self._calc_minutes_till_event(t, hour_of_day,
-                                                                      ssd["open_from"])
-                    vehicle.dispatch(
-                        self._get_station_coordinates(station),
-                        t + minutes_till_open
-                    )
-
-                elif ssd[hour_of_day] == "parttime":
-                    vehicle.appointment = "parttime"
-
+        # send relocated vehicles back home if original vehicle is available
+        for vehicle in self.vehicles.values():
             # available and at other station: see if it should go home now
             if (vehicle.available) and not (vehicle.is_at_base()):
-                base_vs = self.base_vehicles[vehicle.current_station][vehicle.type]
+                base_vs = self.stations[vehicle.current_station_name].base_vehicle_dict[vehicle.type]
                 # send vehicles back to base recursively
                 if np.sum([self.vehicles[v].available_at_base() for v in base_vs]) > 0:
                     self._send_vehicle_to_base_recursively(vehicle.id)
+
+    def _return_vehicle_to_station(self, vehicle_id, to_base=True, station=None):
+        """ Send a vehicle back to the station. """
+        pass
 
     def _send_vehicle_to_base_recursively(self, vehicle_id):
         """ Send a vehicle to it's base and send interim vehicles that may have relocated
         there to their bases. Repeat recursively.
         """
         vehicle = self.vehicles[vehicle_id]
-        station = vehicle.base_station
         vehicle.return_to_base()
+
         # find other vehicles at station that can return to base
-        relocated_vehicles = [v.id for v in self.vehicles.values() if
-                              (v.current_station == station) and
+        relocated_vehicles = [v for v in self.vehicles.values() if
+                              (v.current_station_name == vehicle.base_station_name) and
                               (v.type == vehicle.type) and
                               (not v.is_at_base())]
 
-        for vehicle_id in relocated_vehicles:
-            self._send_vehicle_to_base_recursively(vehicle_id)
+        for v in relocated_vehicles:
+            v.return_to_base()
 
     def relocate_vehicle(self, vehicle_type, origin, destination):
         """ Relocate a vehicle form one station to another. The vehicle must be available and
@@ -434,8 +413,8 @@ class Simulator():
         """
         new_coords = self._get_station_coordinates(destination)
         # select vehicle
-        options = [v for v in self.vehicles.values() if v.available and
-                   v.current_station == origin and v.type == vehicle_type]
+        options = [v for v in self.vehicles.values() if v.available_for_deployment() and
+                   (v.current_station_name == origin) and (v.type == vehicle_type)]
         try:
             options[0].relocate(destination, new_coords)
         except IndexError:
@@ -450,17 +429,15 @@ class Simulator():
 
         # cast types
         dtypes = [np.float, pd.Timestamp, str, str, np.int, str, str, str,
-                  np.float, np.float, np.float, np.float, np.float, np.float, str, str]
+                  np.float, np.float, np.float, np.float, np.float, np.float, str, str, str]
 
         self.results = self.results.astype(
             dtype={self.log_columns[c]: dtypes[c] for c in range(len(self.log_columns))})
 
-        # add reponse time targets
-        self.results["target"] = 10*60
-
     def initialize_without_simulating(self, N=100000):
         self._initialize_log(N)
-        self.vehicles = self._create_vehicle_dict(self.vehicle_allocation)
+        self.vehicles = self._create_vehicles(self.resource_allocation)
+        self._add_base_stations_to_vehicles()
         self.isampler.reset_time()
         self.t = 0
 
@@ -495,10 +472,12 @@ class Simulator():
             if vehicle is None:
                 turnout, travel, onscene, response = [np.nan]*4
                 self._log([self.t, time, type_, loc, prio, func, v, "EXTERNAL", dispatch,
-                           turnout, travel, onscene, response, target, "EXTERNAL", "EXTERNAL"])
+                           turnout, travel, onscene, response, target, "EXTERNAL", "EXTERNAL", "EXTERNAL"])
             else:
+                vehicle.assign_crew()
+
                 turnout, travel, onscene = self.rsampler.sample_response_time(
-                    type_, loc, vehicle.current_station, vehicle.type, vehicle.appointment,
+                    type_, loc, vehicle.current_station_name, vehicle.type, vehicle.current_crew,
                     prio, estimated_time=estimated_time)
 
                 vehicle.dispatch(dest, self.t + (onscene/60) + (estimated_time/60))
@@ -506,7 +485,7 @@ class Simulator():
                 response = dispatch + turnout + travel
                 self._log([self.t, time, type_, loc, prio, func, vehicle.type, vehicle.id,
                            dispatch, turnout, travel, onscene, response, target,
-                           vehicle.current_station, vehicle.base_station])
+                           vehicle.current_station_name, vehicle.base_station_name, vehicle.current_crew])
 
     def simulate_n_incidents(self, N, restart=True):
         """ Simulate N incidents and their reponses.
@@ -521,10 +500,6 @@ class Simulator():
         """
         if restart:
             self.initialize_without_simulating()
-        else:
-            # keep t as it is and keep log intact
-            # self.t = self.log[0:self.log_index, 0].max()
-            pass
 
         for _ in range(N):
             self.simulate_single_incident()
@@ -570,8 +545,8 @@ class Simulator():
         -----
         - The simulation is started from a "base" state for all n simulation runs. This means
         all vehicles are available and at their base stations.
-        - An additional column (`experiment`) is added to the log/results, denoting the number
-        of the experiment.
+        - An additional column (`run`) is added to the log/results, denoting the number
+        of the run/experiment.
         """
         if (start_time is not None) or (end_time is not None):
             self.set_simulation_period(start_time, end_time)
@@ -613,9 +588,9 @@ class Simulator():
         self.log_columns = ["t", "time", "incident_type", "location", "priority",
                             "object_function", "vehicle_type", "vehicle_id", "dispatch_time",
                             "turnout_time", "travel_time", "on_scene_time", "response_time",
-                            "target", "station", "base_station_of_vehicle"]
+                            "target", "station", "base_station_of_vehicle", "crew_type"]
 
-        self.log = np.empty((size, 16), dtype=object)
+        self.log = np.empty((size, 17), dtype=object)
         self.log_index = 0
 
     def _log(self, values):
@@ -687,20 +662,22 @@ class Simulator():
         self.rsampler._create_response_time_generators()
         self.isampler.reset_time()
 
-    def set_vehicle_allocation(self, vehicle_allocation):
+    def set_resource_allocation(self, resource_allocation):
         """ Assign custom allocation of vehicles to stations.
 
         Parameters
         ----------
-        vehicle_allocation: pd.DataFrame
-            The allocation of vehicles to stations. column names are
+        resource_allocation: pd.DataFrame
+            The allocation of vehicles and crews to stations. column names are
             vehicle types and row names (index) are station names. Alternatively,
             there is a column called 'kazerne' that specifies the station names.
             In the latter case, the index is ignored.
         """
-        vehicle_allocation = self._preprocess_vehicle_allocation(vehicle_allocation)
-        self.vehicle_allocation = vehicle_allocation.copy()
-        self.vehicles = self._create_vehicle_dict(vehicle_allocation)
+        resource_allocation = self._preprocess_resource_allocation(resource_allocation)
+        self.resource_allocation = resource_allocation.copy()
+        self.vehicles = self._create_vehicles(self.resource_allocation)
+        self.stations = self._create_stations(self.resource_allocation)
+        self._add_base_stations_to_vehicles()
 
     def set_vehicles(self, station_name, vehicle_type, number):
         """ Set the number of vehicles for a specific station and vehicle_type.
@@ -714,32 +691,34 @@ class Simulator():
         number: int
             The new number of vehicles of vehicle_type to assign to the station.
         """
-        vehicle_allocation = self.vehicle_allocation.copy()
-        if "kazerne" in vehicle_allocation.columns:
-            vehicle_allocation.set_index("kazerne", inplace=True)
-        vehicle_allocation.loc[station_name, vehicle_type] = number
-        self.set_vehicle_allocation(vehicle_allocation)
+        resource_allocation = self.resource_allocation.copy()
+        if "kazerne" in resource_allocation.columns:
+            resource_allocation.set_index("kazerne", inplace=True)
+        resource_allocation.loc[station_name, vehicle_type] = number
+        resource_allocation.reset_index(inplace=True)
+        self.set_resource_allocation(resource_allocation)
 
-    def set_station_locations(self, station_locations, vehicle_allocation, station_names=None):
+    def set_station_locations(self, station_locations, resource_allocation, station_names=None):
         """ Assign custom locations of fire stations.
 
         Parameters
         ----------
         station_locations: array-like of strings
             The demand locations that should get a fire station.
-        vehicle_allocation: pd.DataFrame
-            The vehicles to assign to each station. Every row corresponds to
+        resource_allocation: pd.DataFrame
+            The vehicles and crews to assign to each station. Every row corresponds to
             a station in the same order as station_locations and station_names.
             Expects the column names to match the vehicle types (default:
-            ["TS", "RV", "HV", "WO"]). Other columns are ignored, including 'kazerne',
-            since 'station_names' is used to define the names of the stations.
+            ["TS", "RV", "HV", "WO"]) and crew types. Other columns are ignored,
+            including 'kazerne', since 'station_names' is used to define the names
+            of the stations.
         station_names: array-like of strings, optional
             The custom names of the stations. If None, will use 'STATION 1', 'STATION 2', etc.
         """
-        assert len(station_locations) == len(vehicle_allocation), \
-            ("Length of station_locations does not match number of rows of vehicle_allocation."
-             " station_locations has length {}, while vehicle_allocation has shape {}"
-             .format(len(station_locations), vehicle_allocation.shape))
+        assert len(station_locations) == len(resource_allocation), \
+            ("Length of station_locations does not match number of rows of resource_allocation."
+             " station_locations has length {}, while resource_allocation has shape {}"
+             .format(len(station_locations), resource_allocation.shape))
 
         if station_names is None:
             station_names = ["STATION " + str(i) for i in range(len(station_locations))]
@@ -747,13 +726,12 @@ class Simulator():
         self.rsampler.set_custom_stations(station_locations, station_names)
         self.dispatcher.set_custom_stations(station_locations, station_names)
 
-        vehicle_allocation["kazerne"] = station_names
-        self.set_vehicle_allocation(vehicle_allocation)
+        resource_allocation["kazerne"] = station_names
+        self.set_resource_allocation(resource_allocation)
 
         if self.verbose: print("Custom station locations set.")
 
-    def move_station(self, station_name, new_location, keep_name=True,
-                     keep_distributions=True, new_name=None):
+    def move_station(self, station_name, new_location, keep_name=True, new_name=None):
         """ Move an existing station to a new location.
 
         Parameters
@@ -766,9 +744,6 @@ class Simulator():
             to.
         keep_name: boolean, optional (default: True)
             Whether to keep the current name of the station or not.
-        keep_distribution: boolean, optional (default: True)
-            Whether to keep distributions of fitted random variables, such as
-            the distribution of the turn-out time.
         new_name: str, required if keep_name=False
             New name of the station. Ignored if keep_name=True.
         """
@@ -777,17 +752,15 @@ class Simulator():
         else:
             assert (new_name is not None), "If keep_name=False, new_name must be specified."
 
-        self.rsampler.move_station(station_name, new_location, new_name, keep_distributions)
+        self.rsampler.move_station(station_name, new_location, new_name)
         self.dispatcher.move_station(station_name, new_location, new_name)
 
-        vehicle_allocation = self.vehicle_allocation.copy()
+        resource_allocation = self.resource_allocation.copy()
         if not keep_name:
-            if "kazerne" not in vehicle_allocation.columns:
-                vehicle_allocation.reset_index(drop=False, inplace=True)
-            station_index = np.nonzero(vehicle_allocation["kazerne"].values
+            station_index = np.nonzero(resource_allocation["kazerne"].values
                                        == station_name)[0][0]
-            vehicle_allocation["kazerne"].iloc[station_index] = new_name
-        self.set_vehicle_allocation(vehicle_allocation)
+            resource_allocation["kazerne"].iloc[station_index] = new_name
+        self.set_resource_allocation(resource_allocation)
 
         if self.verbose:
             print("Station moved to {} and vehicles re-initialized".format(new_location))
@@ -796,7 +769,7 @@ class Simulator():
         """ Reset station locations and names to the original stations from the data. """
         self.rsampler.reset_stations()
         self.dispatcher.reset_stations()
-        self.set_vehicle_allocation(self.original_vehicle_allocation)
+        self.set_resource_allocation(self.original_resource_allocation)
 
     def set_start_time(self, start_time):
         self.start_time = pd.to_datetime(start_time)
@@ -828,56 +801,59 @@ class Simulator():
             raise ValueError("Both start and end time are None values. "
                              "Provide at least one of them.")
 
-    def set_daily_station_status(self, station, start_hour, end_hour, status="closed",
-                                 remove_previous=True):
-        """ Close a station every day for a specified time period.
+    def set_daily_station_status(self, station_name, start_hour, end_hour,
+                                 days_of_week=[0, 1, 2, 3, 4, 5, 6], status="closed",
+                                 remove_previous=False):
+        """ Close or operate a station in part time specified hours every week.
 
         Parameters
         ----------
-        station: str,
+        station_name: str,
             The name of the station to close.
         start_hour: int,
             The hour of the day from which the station is closed.
         end_hour: int,
             The hour of the day from which the station is open.
-        remove_previous: boolean, optional (default: True)
+        days_of_week: array-like, optional (default: [0, 1, 2, 3, 4, 5, 6]),
+            The days of the week for which the status adjustment applies in zero-based
+            integers (i.e., Monday = 0, Tuesday = 1, ..., Sunday = 6).
+        status: str, one of ['closed', 'parttime'], optional (default: 'closed'),
+            Whether the station should be completely closed or operating as a part time
+            station during the specified hours.
+        remove_previous: boolean, optional (default: False)
             Whether to reset previously set any closing times.
+
+        Notes
+        -----
+        To set a certain status for the whole day(s), set start_hour and end_hour to the
+        same value. It does not matter what value this is.
         """
         assert status in ["closed", "parttime"], \
             "Status must be one of {}".format(["closed", "parttime"])
+        status_num = 0 if status == "closed" else 1
 
         if remove_previous:
-            self.remove_station_status_cycle(station)
+            self.remove_station_status_cycle(station_name)
 
         if end_hour > start_hour:
             hours = np.arange(start_hour, end_hour, 1)
-            for h in hours:
-                self.station_status_dict[station][h] = status
-
         elif start_hour > end_hour:
             hours = list(np.arange(0, end_hour, 1)) + list(np.arange(start_hour, 24, 1))
-            for h in hours:
-                self.station_status_dict[station][h] = status
-
         else:
-            raise ValueError("Open and closing time cannot be the same. Got open at {} "
-                             "and close at {}.".format(end_hour, start_hour))
+            hours = np.arange(0, 24, 1)
 
-        if status == "closed":
-            keys = ["open_from", "closed_from", "length_closing_period"]
-        elif status == "parttime":
-            keys = ["fulltime_from", "parttime_from", "length_parttime_period"]
+        for day in days_of_week:
+            for h in hours:
+                self.stations[station_name].set_status(day, h, status_num)
+        print("Set status of {} to {} (code: {}) for hours {} on days {}"
+              .format(station_name, status, status_num, hours, days_of_week))
 
-        self.station_status_dict[station][keys[0]] = end_hour
-        self.station_status_dict[station][keys[1]] = start_hour
-        self.station_status_dict[station][keys[2]] = len(hours)
+    def remove_station_status_cycle(self, station_name):
+        self.stations[station_name].reset_status_cycle()
 
-    def remove_station_status_cycle(self, station):
-        self.station_status_dict[station] = {i: "normal" for i in range(24)}
-
-    def reset_station_status_cycles(self):
-        self.station_status_dict = {st: {i: "normal" for i in range(24)}
-                                    for st in self.vehicle_allocation["kazerne"]}
+    def reset_all_station_status_cycles(self):
+        for station in self.stations.values():
+            station.reset_status_cycle()
 
     def evaluate_performance(self, metric="on_time", vehicles=None, priorities=None,
                              group_by=None, by_incident=True):
