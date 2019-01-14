@@ -12,8 +12,7 @@ class TestSimulator(object):
         cls.deployments = pd.read_csv("../Data/inzetten_2008-heden.csv", sep=";", decimal=",", low_memory=False)
         cls.incidents = pd.read_csv("../Data/incidenten_2008-heden.csv", sep=";", decimal=",", low_memory=False)
         cls.stations = pd.read_excel("../Data/kazernepositie en voertuigen.xlsx", sep=";", decimal=".")
-        cls.vehicle_allocation = pd.read_csv("../Data/voertuigenallocatie.csv", sep=";", decimal=".",
-                                             usecols=["kazerne", "#TS", "#RV", "#HV", "#WO"], nrows=19)
+        cls.resource_allocation = pd.read_csv("../Data/resource_allocation.csv", sep=";", decimal=".")
         print("start loading sim")
         cls.sim = quick_load_simulator()
 
@@ -29,35 +28,54 @@ class TestSimulator(object):
         assert isinstance(self.sim, fdsim.simulation.Simulator), \
             "Loaded simulator not an instance of fdsim.simulation.Simulator"
 
-    def test_create_vehicle_dict_normal(self):
-        klass = type(self)
-        vehicles = klass.sim._create_vehicle_dict(klass.vehicle_allocation)
+    def test_preprocess_resource_allocation(self):
+        resource_allocation = self.sim._preprocess_resource_allocation(self.resource_allocation)
+        assert np.all(resource_allocation["kazerne"] == resource_allocation["kazerne"].str.upper()), \
+            "Station names are not upper cased."
+
+    def test_create_vehicles_normal(self):
+        vehicles = self.sim._create_vehicles(self.resource_allocation)
         assert isinstance(vehicles, dict), "Expected a dictionary"
-        assert klass.vehicle_allocation.drop("kazerne", axis=1).sum().sum() == len(vehicles), "Number of vehicles does not match"
-        assert len([v for v in vehicles.values() if v.type == "TS"]) == klass.vehicle_allocation["TS"].sum(), "Incorrect number of TS vehicles"
-        assert len([v for v in vehicles.values() if v.type == "RV"]) == klass.vehicle_allocation["RV"].sum(), "Incorrect number of RV vehicles"
-        assert len([v for v in vehicles.values() if v.type == "HV"]) == klass.vehicle_allocation["HV"].sum(), "Incorrect number of HV vehicles"
-        assert len([v for v in vehicles.values() if v.type == "WO"]) == klass.vehicle_allocation["WO"].sum(), "Incorrect number of WO vehicles"
-        for i in range(len(klass.vehicle_allocation)):
-            station_name = klass.vehicle_allocation["kazerne"].iloc[i]
-            assert len([v for v in vehicles.values() if v.base_station == station_name]) == klass.vehicle_allocation.set_index("kazerne").iloc[i, :].sum(), \
+        assert self.resource_allocation[["TS", "RV", "HV", "WO"]].sum().sum() == len(vehicles), "Number of vehicles does not match"
+        assert len([v for v in vehicles.values() if v.type == "TS"]) == self.resource_allocation["TS"].sum(), "Incorrect number of TS vehicles"
+        assert len([v for v in vehicles.values() if v.type == "RV"]) == self.resource_allocation["RV"].sum(), "Incorrect number of RV vehicles"
+        assert len([v for v in vehicles.values() if v.type == "HV"]) == self.resource_allocation["HV"].sum(), "Incorrect number of HV vehicles"
+        assert len([v for v in vehicles.values() if v.type == "WO"]) == self.resource_allocation["WO"].sum(), "Incorrect number of WO vehicles"
+
+        for i in range(len(self.resource_allocation)):
+            station_name = self.resource_allocation["kazerne"].iloc[i]
+            assert len([v for v in vehicles.values() if v.base_station_name == station_name]) == self.resource_allocation.set_index("kazerne")[["TS", "RV", "HV", "WO"]].iloc[i].sum(), \
                 "Incorrect number of vehicles for station {}".format(station_name)
 
-    def test_create_vehicle_dict_empty(self):
-        empty_allocation = self.vehicle_allocation.copy()
+    def test_create_stations(self):
+        resources = self.sim._preprocess_resource_allocation(self.resource_allocation).copy()
+        stations = self.sim._create_stations(resources)
+        assert len(stations) == len(resources), "Incorrect number of stations created"
+        assert np.all(np.in1d(resources["kazerne"].str.upper(), [s.name for s in stations.values()])), \
+            "Not all station names created correctly."
+
+        resources.set_index("kazerne", inplace=True)
+        for station in stations.values():
+            #for col in ["TS_crew_ft", "TS_crew_pt", "RVHV_crew_ft", "RVHV_crew_pt", "WO_crew_ft", "WO_crew_pt"]:
+            assert np.all(station.crews["TS"] == [resources.loc[station.name, "TS_crew_ft"], resources.loc[station.name, "TS_crew_pt"]]), "TS crews wrong"
+            assert np.all(station.crews["RVHV"] == [resources.loc[station.name, "RVHV_crew_ft"], resources.loc[station.name, "RVHV_crew_pt"]]), "RVHV crews wrong"
+            assert np.all(station.crews["WO"] == [resources.loc[station.name, "WO_crew_ft"], resources.loc[station.name, "WO_crew_pt"]]), "WO crews wrong"
+
+    def test_create_vehicles_empty(self):
+        empty_allocation = self.resource_allocation.copy()
         for col in ["TS", "HV", "RV", "WO"]:
             empty_allocation[col] = 0
             print(empty_allocation)
 
-        vehicles = self.sim._create_vehicle_dict(empty_allocation)
+        vehicles = self.sim._create_vehicles(empty_allocation)
         assert vehicles == dict(), "Expected emtpy dictionary"
 
-    def test_create_vehicle_dict_ts_only(self):
-        allocation = self.vehicle_allocation.copy()
+    def test_create_vehicles_ts_only(self):
+        allocation = self.resource_allocation.copy()
         for col in ["HV", "RV", "WO"]:
             allocation[col] = 0
 
-        vehicles = self.sim._create_vehicle_dict(allocation)
+        vehicles = self.sim._create_vehicles(allocation)
         assert np.all(np.unique([v.type for v in vehicles.values()]) == np.array(["TS"])), "Expected only TS vehicles"
         assert len([v for v in vehicles.values()]) == len([v for v in vehicles.values() if v.type == "TS"]), \
             "Expected all vehicles to be of type TS"
@@ -65,7 +83,7 @@ class TestSimulator(object):
     def test_move_station_and_reset(self):
         station = "AMSTELVEEN"
         new_loc = "13710056"
-        self.sim.move_station("AMSTELVEEN", "13710056", keep_name=True, keep_distributions=True)
+        self.sim.move_station("AMSTELVEEN", "13710056", keep_name=True)
         assert np.all(self.sim._get_station_coordinates(station) == self.sim._get_coordinates(new_loc)), \
             "Coordinates of station not updated correctly"
         assert len(self.sim.rsampler.station_coords.keys()) == 19, "Length of station coordinates is off."
@@ -74,7 +92,7 @@ class TestSimulator(object):
         loc_index = np.nonzero(self.sim.dispatcher.matrix_names == new_loc)[0][0]
         assert (self.sim.dispatcher.time_matrix_stations[station_index, :] == self.sim.dispatcher.time_matrix[loc_index, :]).all(), \
             "Time matrix not updated correctly"
-        for coords in [tuple(v.coords) for v in self.sim.vehicles.values() if v.current_station == station]:
+        for coords in [tuple(v.coords) for v in self.sim.vehicles.values() if v.current_station_name == station]:
             assert coords == self.sim._get_coordinates(new_loc), "Coordinate of vehicles not updated correctly"
 
         self.sim.reset_stations()
@@ -85,48 +103,48 @@ class TestSimulator(object):
         station_name = "OSDORP"
         vehicle_type = "TS"
         number = 5
-        original_number = self.sim.vehicle_allocation.set_index("kazerne").loc[station_name, vehicle_type]
-        assert self.sim.vehicle_allocation.set_index("kazerne").loc[station_name, vehicle_type] == original_number, \
+        original_number = self.sim.resource_allocation.set_index("kazerne").loc[station_name, vehicle_type]
+        assert self.sim.resource_allocation.set_index("kazerne").loc[station_name, vehicle_type] == original_number, \
             "Vehicle allocation not initialized correctly"
-        assert len([v for v in self.sim.vehicles.values() if v.base_station == station_name and v.type == vehicle_type]) == original_number, \
+        assert len([v for v in self.sim.vehicles.values() if v.base_station_name == station_name and v.type == vehicle_type]) == original_number, \
             "Vehicle objects not initialized correctly"
 
         self.sim.set_vehicles(station_name, vehicle_type, number)
-        assert self.sim.vehicle_allocation.set_index("kazerne").loc[station_name, vehicle_type] == number, \
+        assert self.sim.resource_allocation.set_index("kazerne").loc[station_name, vehicle_type] == number, \
             "Vehicle allocation not updated correctly"
-        assert len([v for v in self.sim.vehicles.values() if v.base_station == station_name and v.type == vehicle_type]) == number, \
+        assert len([v for v in self.sim.vehicles.values() if v.base_station_name == station_name and v.type == vehicle_type]) == number, \
             "Vehicle objects not updated correctly"
 
         station_name_2 = "AMSTELVEEN"
         vehicle_type_2 = "WO"
         number_2 = 2
         self.sim.set_vehicles(station_name_2, vehicle_type_2, number_2)
-        assert self.sim.vehicle_allocation.set_index("kazerne").loc[station_name_2, vehicle_type_2] == number_2, \
+        assert self.sim.resource_allocation.set_index("kazerne").loc[station_name_2, vehicle_type_2] == number_2, \
             "Vehicle allocation not updated correctly"
-        assert len([v for v in self.sim.vehicles.values() if v.base_station == station_name_2 and v.type == vehicle_type_2]) == number_2, \
+        assert len([v for v in self.sim.vehicles.values() if v.base_station_name == station_name_2 and v.type == vehicle_type_2]) == number_2, \
             "Vehicle objects not updated correctly"
-        assert self.sim.vehicle_allocation.set_index("kazerne").loc[station_name, vehicle_type] == number, \
+        assert self.sim.resource_allocation.set_index("kazerne").loc[station_name, vehicle_type] == number, \
             "Vehicle allocation not updated correctly"
-        assert len([v for v in self.sim.vehicles.values() if v.base_station == station_name and v.type == vehicle_type]) == number, \
+        assert len([v for v in self.sim.vehicles.values() if v.base_station_name == station_name and v.type == vehicle_type]) == number, \
             "Vehicle objects not updated correctly"
 
         self.sim.reset_stations()
-        assert self.sim.vehicle_allocation.set_index("kazerne").loc[station_name, vehicle_type] == original_number, \
+        assert self.sim.resource_allocation.set_index("kazerne").loc[station_name, vehicle_type] == original_number, \
             "Vehicle allocation not initialized correctly"
-        assert len([v for v in self.sim.vehicles.values() if v.base_station == station_name and v.type == vehicle_type]) == original_number, \
+        assert len([v for v in self.sim.vehicles.values() if v.base_station_name == station_name and v.type == vehicle_type]) == original_number, \
             "Vehicle objects not initialized correctly"
         self.sim.reset_stations()
 
     def test_relocate_vehicle(self):
-        ids_amstelveen = [v.id for v in self.sim.vehicles.values() if v.type == "TS" and v.current_station == "AMSTELVEEN"]
+        ids_amstelveen = [v.id for v in self.sim.vehicles.values() if v.type == "TS" and v.current_station_name == "AMSTELVEEN"]
         original_av = len(ids_amstelveen)
-        ids_hendrik = [v.id for v in self.sim.vehicles.values() if v.type == "TS" and v.current_station == "HENDRIK"]
+        ids_hendrik = [v.id for v in self.sim.vehicles.values() if v.type == "TS" and v.current_station_name == "HENDRIK"]
         original_hendrik = len(ids_hendrik)
 
         self.sim.relocate_vehicle("TS", "AMSTELVEEN", "HENDRIK")
 
-        new_ids_av = [v.id for v in self.sim.vehicles.values() if v.type == "TS" and v.current_station == "AMSTELVEEN"]
-        new_ids_hendrik = [v.id for v in self.sim.vehicles.values() if v.type == "TS" and v.current_station == "HENDRIK"]
+        new_ids_av = [v.id for v in self.sim.vehicles.values() if v.type == "TS" and v.current_station_name == "AMSTELVEEN"]
+        new_ids_hendrik = [v.id for v in self.sim.vehicles.values() if v.type == "TS" and v.current_station_name == "HENDRIK"]
 
         assert len(new_ids_av) == original_av - 1, "Number of vehicles at origin not updates correctly"
         assert len(new_ids_hendrik) == original_hendrik + 1, "Number of vehicles at destination not updated correctly"
@@ -136,11 +154,111 @@ class TestSimulator(object):
 
         self.sim.relocate_vehicle("TS", "HENDRIK", "AMSTELVEEN")
 
+    @staticmethod
+    def see_activity(sim, station):
+        times = sim.results[sim.results["station"] == station]["time"]
+        times = pd.to_datetime(times)
+
+        def count_per_hour(h):
+            return np.sum(times.dt.hour == h)
+
+        return [count_per_hour(h) for h in range(24)]
+
+    @staticmethod
+    def see_turnout_times_per_hour(sim, station, prio=1, vehicle="TS"):
+        times = sim.results[(sim.results["station"] == station) &
+                            (sim.results["priority"] == prio) &
+                            (sim.results["vehicle_type"] == vehicle)][["time", "turnout_time"]]
+        times["time"] = pd.to_datetime(times["time"])
+        times["weekday"] = times["time"].dt.weekday
+
+        def median_per_hour(d, h):
+            return np.median(times[(times["time"].dt.hour == h) & (times["weekday"] == d)]["turnout_time"])
+
+        medians = np.zeros((7, 24))
+        for d in range(7):
+            for h in range(24):
+                medians[d, h] = median_per_hour(d, h)
+        
+        return medians
+
+    def test_set_station_cycle_closed_at_night(self):
+
+        self.sim.set_daily_station_status("VICTOR", start_hour=23, end_hour=7, status="closed")
+        expected = np.array([[0., 0., 0., 0., 0., 0., 0., 2., 2., 2., 2., 2., 2., 2., 2., 2.,
+                              2., 2., 2., 2., 2., 2., 2., 0.],
+                             [0., 0., 0., 0., 0., 0., 0., 2., 2., 2., 2., 2., 2., 2., 2., 2.,
+                              2., 2., 2., 2., 2., 2., 2., 0.],
+                             [0., 0., 0., 0., 0., 0., 0., 2., 2., 2., 2., 2., 2., 2., 2., 2.,
+                              2., 2., 2., 2., 2., 2., 2., 0.],
+                             [0., 0., 0., 0., 0., 0., 0., 2., 2., 2., 2., 2., 2., 2., 2., 2.,
+                              2., 2., 2., 2., 2., 2., 2., 0.],
+                             [0., 0., 0., 0., 0., 0., 0., 2., 2., 2., 2., 2., 2., 2., 2., 2.,
+                              2., 2., 2., 2., 2., 2., 2., 0.],
+                             [0., 0., 0., 0., 0., 0., 0., 2., 2., 2., 2., 2., 2., 2., 2., 2.,
+                              2., 2., 2., 2., 2., 2., 2., 0.],
+                             [0., 0., 0., 0., 0., 0., 0., 2., 2., 2., 2., 2., 2., 2., 2., 2.,
+                              2., 2., 2., 2., 2., 2., 2., 0.]])
+
+        assert np.all(self.sim.stations["VICTOR"].status_table == expected), "Status table not as expected."
+
+        # test if 'base_station' attribute of vehicles is updated as well
+        vehicles_victor = [v for v in self.sim.vehicles.values() if v.base_station_name == "VICTOR"]
+        for v in vehicles_victor:
+            assert np.all(v.base_station.status_table == expected), "Status of vehicle's base station not updated correctly."
+
+        # test simulation outputs
+        self.sim.simulate_period(n=1)
+        activity = self.see_activity(self.sim, "VICTOR")
+        assert np.sum(activity[0:7]) == 0, "Activity spotted in closed period"
+        assert np.sum(activity[23]) == 0, "Activity spotted in closed period"
+        
+    def test_set_station_cycle_parttime_in_weekend(self):
+
+        self.sim.set_daily_station_status("HENDRIK", start_hour=23, end_hour=23, days_of_week=[5, 6], status="parttime")
+        expected = np.array([[2.] * 24,
+                             [2.] * 24,
+                             [2.] * 24,
+                             [2.] * 24,
+                             [2.] * 24,
+                             [1.] * 24,
+                             [1.] * 24])
+
+        assert np.all(self.sim.stations["HENDRIK"].status_table == expected), "Status table not as expected."
+
+        # test if 'base_station' attribute of vehicles is updated as well
+        vehicles_hendrik = [v for v in self.sim.vehicles.values() if v.base_station_name == "HENDRIK"]
+        for v in vehicles_hendrik:
+            assert np.all(v.base_station.status_table == expected), "Status of vehicle's base station not updated correctly."
+
+        # test simulation outputs for adjusted turn-out times
+        self.sim.simulate_period(n=1)
+        turnout = self.see_turnout_times_per_hour(self.sim, "HENDRIK", prio=1, vehicle="TS")
+        simulated_parttime = np.median([next(self.sim.rsampler.turnout_generators["parttime"][1]["TS"]) for i in range(10000)])
+        simulated_fulltime = np.median([next(self.sim.rsampler.turnout_generators["fulltime"][1]["TS"]) for i in range(10000)])
+        assert np.median(turnout[0:5, :]) == approx(simulated_fulltime, rel=0.05), "Median turnout times do not match"
+        assert np.median(turnout[5:7, :]) == approx(simulated_parttime, rel=0.05), "Median turnout times do not match"
+
+    def test_reset_all_station_status_cycles(self):
+        self.sim.set_daily_station_status("VICTOR", start_hour=23, end_hour=7, status="closed")
+        self.sim.set_daily_station_status("HENDRIK", start_hour=23, end_hour=23, days_of_week=[5, 6], status="parttime")
+        self.sim.reset_all_station_status_cycles()
+        assert np.all(self.sim.stations["VICTOR"].status_table == 2.), "Not all entries in status table are equal to 2."
+        assert np.all(self.sim.stations["HENDRIK"].status_table == 2.), "Not all entries in status table are equal to 2."
+        # test vehicle reference to stations
+        vehicles_hendrik = [v for v in self.sim.vehicles.values() if v.base_station_name == "HENDRIK"]
+        for v in vehicles_hendrik:
+            assert np.all(v.base_station.status_table == 2.), "Status of vehicle's base station not updated correctly."
+
+        vehicles_victor = [v for v in self.sim.vehicles.values() if v.base_station_name == "VICTOR"]
+        for v in vehicles_victor:
+            assert np.all(v.base_station.status_table == 2.), "Status of vehicle's base station not updated correctly."
+
     def test_log_result(self):
         n = 100
         self.sim.simulate_n_incidents(n, restart=True)
         assert isinstance(self.sim.results, pd.DataFrame)
-        assert self.sim.results.shape[1] == 16, "Expected results dataframe of shape (100+, 16), got {}".format(self.sim.results.shape)
+        assert self.sim.results.shape[1] == 17, "Expected results dataframe of shape (100+, 17), got {}".format(self.sim.results.shape)
         assert "target" in self.sim.results.columns, "Expected 'target' column to be added to columns upon finishing simulation"
         assert self.sim.results.drop(["turnout_time", "travel_time", "on_scene_time", "response_time"], axis=1).isnull().sum().sum() == 0, "Unexpected missing values in results"
         assert self.sim.results["t"].nunique() == n, "Expected 100 unique values for 't'"
