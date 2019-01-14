@@ -257,7 +257,7 @@ class FireStation():
             if status == 2:
                 # (return to) normal operation
                 # see what crews are deployed or relocated to other stations
-                deployed_vehicles = [v for v in self.base_vehicles if not v.is_at_base()]
+                deployed_vehicles = [v for v in self.base_vehicles if not v.available_at_base()]
                 for vtype in self.base_vtypes:
                     ft = len([v for v in deployed_vehicles if (v.type == vtype) and
                               (v.current_crew == "fulltime")])
@@ -268,9 +268,14 @@ class FireStation():
 
             elif status == 1:
                 # everything to parttime
+                deployed_vehicles = [v for v in self.base_vehicles if not v.available_at_base()]
                 for vtype in self.base_vtypes:
-                    self.crews[self.crew_map[vtype]][1] += self.crews[self.crew_map[vtype]][0]
-                    self.crews[self.crew_map[vtype]][0] = 0
+                    ft = len([v for v in deployed_vehicles if (v.type == vtype) and
+                              (v.current_crew == "fulltime")])
+                    pt = len([v for v in deployed_vehicles if (v.type == vtype) and
+                              (v.current_crew == "parttime")])
+                    normal_ft, normal_pt = self.get_normal_crews(vtype)
+                    self.set_crews(vtype, 0, normal_ft - ft + normal_pt - pt)
 
             elif status == 0:
                 # close the station
