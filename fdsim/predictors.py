@@ -4,7 +4,10 @@ from abc import abstractmethod, ABCMeta
 
 import numpy as np
 import pandas as pd
+
 from fbprophet import Prophet
+from sklearn.model_selection import TimeSeriesSplit
+from sklearn.metrics import mean_squared_error, mean_absolute_error
 
 
 class BaseIncidentPredictor(object):
@@ -20,6 +23,36 @@ class BaseIncidentPredictor(object):
     @abstractmethod
     def predict(self, data):
         """ Predict using the fitted model. """
+
+    @staticmethod
+    def evaluate(y_true, y_predict, metric="RMSE"):
+        """ Evaluate a given prediction.
+
+        Parameters
+        ----------
+        y_true: array,
+            The ground truth values.
+        y_predict: array
+            The predicted labels / forecasted values.
+        metric: str, one of ['MAE', 'RMSE'], optional (default: 'RMSE'),
+            The evaluation metric. Uses the Root Mean Squared Error for 'RMSE' and the
+            Mean Absolute Error for 'MAE'.
+
+        Returns
+        -------
+        score: float,
+            The error score(s) of the prediction. If y is multi-output, outputs a list of
+            scores (one score per variable).
+        """
+        assert len(y_true) == len(y_predict), \
+            "Values and predictions must have same length"
+        if metric == "RMSE":
+            return np.sqrt(mean_squared_error(y_true, y_predict, multioutput="raw_values"))
+        elif metric == "MAE":
+            return mean_absolute_error(y_true, y_predict, multioutput="raw_values")
+        else:
+            raise ValueError("{} is not a supported value for 'metric'. "
+                             "Must be one of ['RMSE', 'MAE'].")
 
     @abstractmethod
     def _create_sampling_dict(self):
@@ -45,6 +78,80 @@ class BaseIncidentPredictor(object):
         if self.sampling_dict is None:
             self._create_sampling_dict()
         return self.sampling_dict
+
+    @staticmethod
+    def _create_date_hour_column(data, datetime_col="dim_incident_start_datumtijd"):
+        """ Create a datetime column with hourly precision to facilitate counting incidents
+        per hour. """
+        dts = pd.to_datetime(data[datetime_col])
+        return dts.apply(lambda x: pd.Timestamp(year=x.year, month=x.month,
+                                                day=x.day, hour=x.hour))
+
+    @staticmethod
+    def _create_complete_hourly_index(start_datetime, end_datetime=None, n_hours=None):
+        """ Create an array of datetime values of hourly precision from start to end or from
+        start until a specified number of values. The array can be used to reindex a dataframe
+        that counts incidents per hour, so that values of zero will be listed as well.
+        """
+        start_datetime = pd.to_datetime(start_datetime)
+        end_datetime = pd.to_datetime(end_datetime)
+        if end_datetime is not None:
+            result = pd.date_range(start=start_datetime, end=end_datetime, freq="H")
+        elif n_hours is not None:
+            result = pd.date_range(start=start_datetime, end=end_datetime, periods=n_hours, freq="H")
+        else:
+            raise ValueError("One of 'end_datetime' or 'n_hours' must be given")
+
+        index = pd.Index(result, name="hourly_index")
+        return index
+
+    def ts_cross_validate(self, data, n_splits=5, types=None, last_n_years=True, metric="MAE"):
+        """ Perform n-fold time series cross validation to evaluate the forecast method. """
+        if types is not None:
+            data = data[np.in1d(data["dim_incident_incident_type"], types)].copy()
+        else:
+            data = data[~np.in1d(data["dim_incident_incident_type"], ["nan", "NVT", np.nan])].copy()
+
+        print(data.shape)
+        data["datetime"] = self._create_date_hour_column(data)
+        print("min, max time: {}, {}".format(data["datetime"].min(), data["datetime"].max()))
+        times = self._create_complete_hourly_index(data["datetime"].min(), end_datetime=data["datetime"].max())
+        if types is None:
+            types = list(set(data["dim_incident_incident_type"].unique()) - set(["nan", "NVT", np.nan]))
+
+        ts = pd.pivot_table(
+            data,
+            values="dim_incident_id",
+            index="datetime",
+            columns="dim_incident_incident_type",
+            aggfunc="count",
+            fill_value=0
+        )
+        ts = ts.reindex(times, fill_value=0, axis=0)
+        assert len(ts) == len(times), \
+            "Pivot went wrong, length pivot = {}, while length times = {}".format(len(ts), len(times))
+
+        if last_n_years:
+            splitter = YearSplitter(n_splits=n_splits, obs_per_year=365*24)
+        else: # use classic equal-sized folds
+            splitter = TimeSeriesSplit(n_splits=n_splits)
+
+        scores = []
+        for train_index, test_index in splitter.split(times):
+            print("train index: {} ({}) - {} ({})".format(times[train_index[0]], np.min(train_index), times[train_index[-1]], np.max(train_index)))
+            print("test index: {} ({}) - {} ({})".format(times[test_index[0]], np.min(test_index), times[test_index[-1]], np.max(test_index)))
+            future = pd.DataFrame({"ds": times[test_index]})
+
+            self.fit(
+                data[(data["datetime"] >= times[train_index[0]]) & (data["datetime"] < times[train_index[-1]])],
+                types=types
+            )
+            self.predict(future=future)
+            y_predict = self.get_forecast().drop("ds", axis=1)
+            y_true = ts.iloc[test_index, :]
+            scores.append(self.evaluate(y_true, y_predict, metric=metric))
+
+        return np.array(scores)
 
 
 class ProphetIncidentPredictor(BaseIncidentPredictor):
@@ -137,16 +244,23 @@ class ProphetIncidentPredictor(BaseIncidentPredictor):
         if self.verbose:
             print("Preparing incident data for analysis...")
 
-        self.incidents, self.time_index = self._prep_data_for_prediction(data)
-        self.models_dict = dict()
+        self.incidents = self._prep_data_for_prediction(data)
+        self.incidents["hourly_datetime"] = self._create_date_hour_column(
+            self.incidents,
+            datetime_col="dim_incident_start_datumtijd"
+        )
 
+        start = self.incidents["hourly_datetime"].min()
+        end = self.incidents["hourly_datetime"].max()
+        self.time_index = self._create_complete_hourly_index(start, end_datetime=end)
+
+        self.models_dict = dict()
         for type_ in self.types:
             if self.verbose:
                 print("Fitting model for type {}...".format(type_))
 
             m = Prophet()
-            dfprophet = self._create_prophet_data(self.incidents, type_,
-                                                  self.time_index)
+            dfprophet = self._create_prophet_data(self.incidents, self.time_index, type_=type_)
             m.fit(dfprophet)
             self.models_dict[type_] = m
 
@@ -154,7 +268,7 @@ class ProphetIncidentPredictor(BaseIncidentPredictor):
         if self.verbose:
             print("Models fitted.")
 
-    def predict(self, periods=365*24, freq="H", save=False):
+    def predict(self, periods=365*24, freq="H", save=False, future=None):
         """ Forecast the incident rate using Prophet.
 
         Notes
@@ -175,10 +289,10 @@ class ProphetIncidentPredictor(BaseIncidentPredictor):
         save: boolean
             Whether to save the forecast to a csv file. Optional, defaults to false.
         """
-        assert self.fitted, \
-            "First use 'fit()' to fit a model before predicting."
-        future = self.models_dict[self.types[0]].make_future_dataframe(
-            periods=periods, freq=freq, include_history=False)
+        assert self.fitted, "First use 'fit()' to fit a model before predicting."
+        if future is None:
+            future = self.models_dict[self.types[0]].make_future_dataframe(
+                periods=periods, freq=freq, include_history=False)
 
         forecast_dict = dict(ds=future["ds"].tolist())
 
@@ -200,8 +314,7 @@ class ProphetIncidentPredictor(BaseIncidentPredictor):
             print("Predictions made" + msg + ".")
 
     def _prep_data_for_prediction(self, incidents):
-        """ Format time columns and create an hourly index needed
-            for prediction.
+        """ Format time columns.
 
         Parameters
         ----------
@@ -212,25 +325,29 @@ class ProphetIncidentPredictor(BaseIncidentPredictor):
         -------
         The prepared DataFrame and a pd.Index with hourly timestamps.
         """
-        incidents["dim_tijd_uur"] = incidents["dim_tijd_uur"].astype(float)\
-            .astype(int).astype(str).str.zfill(2)
+        incidents["dim_tijd_uur"] = (incidents["dim_tijd_uur"].astype(float)
+                                                              .astype(int)
+                                                              .astype(str)
+                                                              .str.zfill(2)
+                                                              .copy())
         incidents["dim_datum_datum"] = pd.to_datetime(
-            incidents["dim_datum_datum"]).dt.strftime("%Y-%m-%d")
-        new_index = incidents.groupby(["dim_datum_datum", "dim_tijd_uur"]
-                                      )["dim_incident_id"].count().index
-        return incidents, new_index
+            incidents["dim_datum_datum"]).dt.strftime("%Y-%m-%d").copy()
+        # assert that it's sorted
+        incidents.sort_values(["dim_datum_datum", "dim_tijd_uur"],
+                              ascending=True, inplace=True)
+        return incidents
 
-    def _create_prophet_data(self, incidents, type_, new_index):
+    def _create_prophet_data(self, incidents, new_index, type_=None, groupby_col="hourly_datetime"):
         """ Create a DataFrame in the format required by Prophet.
 
         Parameters
         ----------
         incidents: pd.DataFrame
             The incident data.
-        type_: str
-            The incident type to make a DataFrame for.
         new_index: pandas.Index object
             Specifies the times that the resulting DataFrame should contain.
+        type_: str or None (default: None)
+            The incident type to make a DataFrame for. If None, ignore incident types.
 
         Returns
         -------
@@ -238,16 +355,13 @@ class ProphetIncidentPredictor(BaseIncidentPredictor):
         and 'y' is the number of incidents per time_unit. This DataFrame can be
         used directly as input for Prophet.fit().
         """
-        dfprophet = incidents[["dim_incident_id", "dim_datum_datum",
-                               "dim_tijd_uur", "dim_incident_incident_type"]]
-        dfprophet = dfprophet[dfprophet["dim_incident_incident_type"] == type_]
-        dfprophet = dfprophet.groupby(["dim_datum_datum", "dim_tijd_uur"]
-                                      )["dim_incident_id"].count()
+        dfprophet = incidents[["dim_incident_id", groupby_col, "dim_incident_incident_type"]].copy()
+        if type_ is not None:
+            dfprophet = dfprophet[dfprophet["dim_incident_incident_type"] == type_]
+        dfprophet = dfprophet.groupby(groupby_col)["dim_incident_id"].size()
         dfprophet = dfprophet.reindex(new_index, fill_value=0).reset_index()
         dfprophet.rename(columns={"dim_incident_id": "y"}, inplace=True)
-        dfprophet["ds"] = pd.to_datetime(dfprophet["dim_datum_datum"] + " " +
-                                         dfprophet["dim_tijd_uur"],
-                                         format="%Y-%m-%d %H")
+        dfprophet["ds"] = dfprophet[new_index.name]
 
         return dfprophet[["ds", "y"]]
 
@@ -317,3 +431,20 @@ class ProphetIncidentPredictor(BaseIncidentPredictor):
         self.sampling_end_time = end_time or fc["ds"].max()
 
         return rates_dict
+
+
+class YearSplitter():
+    """ Split data on whole years to provide constant evaluation metric. """
+
+    def __init__(self, n_splits=3, obs_per_year=365*24):
+        self.n = n_splits
+        self.obs_per_year = obs_per_year
+
+    def split(self, data):
+        N = len(data)
+        splits = [tuple([np.arange(0, N - self.obs_per_year * i),
+                         np.arange(N - self.obs_per_year * i, N - self.obs_per_year*(i - 1))])
+                  for i in range(1, self.n + 1)]
+
+        for train, test in splits[::-1]:
+            yield train, test
