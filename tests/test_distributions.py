@@ -2,7 +2,11 @@ import pytest
 from pytest import approx
 from fdsim.simulation import Simulator
 from fdsim.incidentfitting import prepare_incidents_for_spatial_analysis
-from fdsim.responsetimefitting import prepare_data_for_response_time_analysis, sample_size_sufficient
+from fdsim.responsetimefitting import (
+    prepare_data_for_response_time_analysis,
+    sample_size_sufficient,
+    add_parttime_fulltime_indicator
+)
 from fdsim.helpers import quick_load_simulator
 import pandas as pd
 import numpy as np
@@ -15,13 +19,12 @@ class TestDistributions():
         cls.deployments = pd.read_csv("../Data/inzetten_2008-heden.csv", sep=";", decimal=",", low_memory=False)
         cls.incidents = pd.read_csv("../Data/incidenten_2008-heden.csv", sep=";", decimal=",", low_memory=False)
         cls.stations = pd.read_excel("../Data/kazernepositie en voertuigen.xlsx", sep=";", decimal=".")
-        cls.vehicle_allocation = pd.read_csv("../Data/voertuigenallocatie.csv", sep=";", decimal=".",
-                                             usecols=["kazerne", "#TS", "#RV", "#HV", "#WO"], nrows=19)
+        cls.resource_allocation = pd.read_csv("../Data/resource_allocation.csv", sep=";", decimal=".")
         cls.prepared_incidents = prepare_incidents_for_spatial_analysis(cls.incidents)
         cls.response_time_data = prepare_data_for_response_time_analysis(cls.incidents, cls.deployments,
-                                                                         cls.stations, cls.vehicle_allocation)
+                                                                         cls.stations, cls.resource_allocation)
         # print("start loading sim")
-        # cls.sim = Simulator(cls.incidents, cls.deployments, cls.stations, cls.vehicle_allocation)
+        # cls.sim = Simulator(cls.incidents, cls.deployments, cls.stations, cls.resource_allocation)
         sim = quick_load_simulator()
         sim.simulate_n_incidents(100000)
         cls.sim_results = sim.results.copy()
@@ -157,15 +160,15 @@ class TestDistributions():
             # get distribution in data over locations
             distribution_data = type_data.groupby("hub_vak_bk").size() / len(type_data)
             # sample from simulator.isampler and get sampled distribution
-            sample = [sim.isampler.incident_types[type_].sample_location() for x in range(2000000)]
+            sample = [sim.isampler.incident_types[type_].sample_location() for x in range(5000000)]
             # choose some random locations that has occurred for this type in the data
             for _ in range(20):
                 # choose random location to test
                 loc = np.random.choice(type_data["hub_vak_bk"].unique())
-                proportion = sample.count(loc) / 1000000
+                proportion = sample.count(loc) / len(sample)
 
                 print("Testing proportion of {} that occurred in {}".format(type_, loc))                
-                assert proportion == approx(distribution_data.loc[loc], rel=0.10), \
+                assert proportion == approx(distribution_data.loc[loc], rel=0.15), \
                     "Proportion of {} that happened in {} deviates".format(type_, loc)
 
     def test_vehicle_distribution(self):
@@ -397,6 +400,41 @@ class TestDistributions():
             else:
                 print("Type {}, station {} did not have sufficient observations.".format(type_, station))
 
+    def test_turnout_times_per_appointment_and_prio(self, turnout_data):
+        
+        turnout_data = add_parttime_fulltime_indicator(
+            turnout_data,
+            station_col="inzet_kazerne_groep",
+            volunteer_stations=["DRIEMOND", "DUIVENDRECHT", "AMSTELVEEN VRIJWILLIG"]
+        )
+        turnout_data["appointment"] = "parttime"
+        turnout_data[turnout_data["fulltime"]]["appointment"] = "fulltime"
+
+        for appointment, prio, vtype in [("fulltime", 1, "TS"), ("parttime", 2, "RV"), ("fulltime", 3, "HV"),
+                                         ("parttime", 1, "TS"), ("fulltime", 2, "HV"), ("fulltime", 2, "TS"),
+                                         ("parttime", 1, "WO"), ("fulltime", 2, "WO"), ("fulltime", 1, "RV")]:
+
+            # filter data
+            data = turnout_data[(turnout_data["appointment"] == appointment) &
+                                (turnout_data["dim_prioriteit_prio"] == prio) &
+                                (turnout_data["voertuig_groep"] == vtype)]
+
+            if sample_size_sufficient(data["turnout_time"]):
+                simulated_data = self.sim_results[(self.sim_results["appointment"] == appointment) &
+                                                  (self.sim_results["priority"] == prio) &
+                                                  (self.sim_results["vehicle_type"] == vtype)]
+
+                # calculate and check dispatch time mean and std
+                expected_mean, expected_std = self.calc_mean_and_std(data["turnout_time"].values)
+                simulated_mean, simulated_std = self.calc_mean_and_std(simulated_data["turnout_time"].values)
+
+                assert simulated_mean == approx(expected_mean, abs=5), \
+                    "Mean turn-out time for {} deployments of {} with a {} not as expected".format(appointment, prio, vtype)
+                assert simulated_std == approx(expected_std, abs=10), \
+                    "Standard deviation of turn-out time for {} deployments of {} with a {} not as expected".format(appointment, prio, vtype)
+                print("Turnout time test executed for {} deployments of {} with a {}".format(appointment, prio, vtype))
+            else:
+                print("Deployments by {} staff at prio {} in a {} did not have sufficient observations.".format(appointment, prio, vtype))
     # def test_travel_time_distribution_overall(self):
     #     data = pd.read_csv("./data/response_data.csv", dtype={"hub_vak_bk": int}, low_memory=False)
     #     data = data[np.isin(data["voertuig_groep"], ["TS", "RV", "HV", "WO"])]
