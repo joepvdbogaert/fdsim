@@ -1,6 +1,8 @@
 from pytest import approx
 import numpy as np
 import pandas as pd
+import datetime
+
 from fdsim.helpers import quick_load_simulator
 import fdsim
 
@@ -232,12 +234,12 @@ class TestSimulator(object):
             assert np.all(v.base_station.status_table == expected), "Status of vehicle's base station not updated correctly."
 
         # test simulation outputs for adjusted turn-out times
-        self.sim.simulate_period(n=1)
+        self.sim.simulate_period(n=2)
         turnout = self.see_turnout_times_per_hour(self.sim, "HENDRIK", prio=1, vehicle="TS")
         simulated_parttime = np.median([next(self.sim.rsampler.turnout_generators["parttime"][1]["TS"]) for i in range(10000)])
         simulated_fulltime = np.median([next(self.sim.rsampler.turnout_generators["fulltime"][1]["TS"]) for i in range(10000)])
-        assert np.median(turnout[0:5, :]) == approx(simulated_fulltime, rel=0.05), "Median turnout times do not match"
-        assert np.median(turnout[5:7, :]) == approx(simulated_parttime, rel=0.05), "Median turnout times do not match"
+        assert np.median(turnout[0:5, :]) == approx(simulated_fulltime, rel=0.1), "Median turnout times do not match"
+        assert np.median(turnout[5:7, :]) == approx(simulated_parttime, rel=0.1), "Median turnout times do not match"
 
     def test_reset_all_station_status_cycles(self):
         self.sim.set_daily_station_status("VICTOR", start_hour=23, end_hour=7, status="closed")
@@ -253,6 +255,38 @@ class TestSimulator(object):
         vehicles_victor = [v for v in self.sim.vehicles.values() if v.base_station_name == "VICTOR"]
         for v in vehicles_victor:
             assert np.all(v.base_station.status_table == 2.), "Status of vehicle's base station not updated correctly."
+
+    def test_set_start_time_end_time_and_reset_times(self):
+        old_start_time = pd.to_datetime(self.sim.start_time)
+        old_end_time = pd.to_datetime(self.sim.end_time)
+        interval = (old_end_time - old_start_time).days
+        # remove 1/4 on start and end
+        delta = interval / 4
+
+        new_start_time = old_start_time + pd.Timedelta(days=delta)
+        # round down
+        new_start_time = datetime.datetime(new_start_time.year, new_start_time.month, new_start_time.day, new_start_time.hour, 0)
+        print("New start time: {}".format(new_start_time))
+        self.sim.set_start_time(new_start_time)
+        assert self.sim.start_time == new_start_time, "start_time attribute not updated correctly"
+        assert self.sim.isampler.sampling_dict[0]["time"] == new_start_time, "start time of sampling dict not updated correctly"
+
+        new_end_time = old_end_time - pd.Timedelta(days=delta)
+        # round down
+        new_end_time = datetime.datetime(new_end_time.year, new_end_time.month, new_end_time.day, new_end_time.hour, 0)
+        print("New end time: {}".format(new_end_time))
+        self.sim.set_end_time(new_end_time)
+        assert self.sim.end_time == new_end_time, "end_time attribute not updated correctly"
+        last_index = self.sim.isampler.T - 1
+        assert self.sim.isampler.sampling_dict[last_index]["time"] == new_end_time, "end time of sampling dict not updated correctly"
+
+        # reset
+        self.sim.reset_simulation_period()
+        assert self.sim.start_time == old_start_time, "Old start time not stored in attribute start_time"
+        assert self.sim.end_time == old_end_time, "Old end time not stored in attribute end_time"
+        assert self.sim.isampler.sampling_dict[0]["time"] == old_start_time, "start time of sampling dict not reset correctly"
+        last_index = self.sim.isampler.T - 1
+        assert self.sim.isampler.sampling_dict[last_index]["time"] == old_end_time, "end time of sampling dict not reset correctly"
 
     def test_log_result(self):
         n = 100
