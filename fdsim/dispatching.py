@@ -4,6 +4,7 @@ import numpy as np
 import pandas as pd
 
 from abc import abstractmethod, ABCMeta
+from fdsim.helpers import progress
 
 
 class BaseDispatcher(object):
@@ -92,13 +93,13 @@ class ShortestDurationDispatcher(BaseDispatcher):
         if save_matrix:
             self.save_time_matrix(self.path)
 
-        if self.verbose: print("Dispatcher ready to go.")
+        progress("Dispatcher ready to go.", verbose=self.verbose)
 
     def _get_travel_durations(self):
         """ Use OSRM to find the travel durations between every set of demand
             locations and stations.
         """
-        if self.verbose: print("Creating matrix of travel times...")
+        progress("Creating matrix of travel times...", verbose=self.verbose)
         coord_list = list(self.demand_locs.values()) + list(self.station_locs.values())
         id_list = list(self.demand_locs.keys()) + list(self.station_locs.keys())
 
