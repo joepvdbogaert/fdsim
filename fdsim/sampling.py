@@ -12,7 +12,7 @@ from fdsim.incidentfitting import (
     get_building_function_probabilities
 )
 
-from fdsim.predictors import ProphetIncidentPredictor
+from fdsim.predictors import ProphetIncidentPredictor, BasicLambdaForecaster
 
 from fdsim.responsetimefitting import (
     prepare_data_for_response_time_analysis,
@@ -26,6 +26,7 @@ from fdsim.responsetimefitting import (
 )
 
 from fdsim.objects import DemandLocation, IncidentType
+from fdsim.helpers import progress
 
 
 class ResponseTimeSampler():
@@ -111,18 +112,18 @@ class ResponseTimeSampler():
 
         if self.data is None:
             if incidents is not None and deployments is not None and stations is not None:
-                if self.verbose: print("No data loaded, start pre-processing with OSRM...")
+                progress("No data loaded, preprocess with OSRM.", verbose=self.verbose)
                 self._prep_data_for_fitting(incidents=incidents, deployments=deployments,
                                             stations=stations, vehicles=vehicle_types,
                                             osrm_host=osrm_host, save=save_prepared_data)
             else:
                 raise ValueError("No prepared data loaded and not all data fed to 'fit()'.")
 
-        if self.verbose: print("Extracting coordinates of stations and demand locations...")
+        progress("Extracting station and location coordinates.", verbose=self.verbose)
         self.location_coords, self.station_coords = \
             get_coordinates_locations_stations(self.data, location_col=location_col)
 
-        if self.verbose: print('Fitting random variables on response time...')
+        progress('Fitting random variables on response time...', verbose=self.verbose)
         self.high_prio_data = (self.data[(self.data["dim_prioriteit_prio"] == 1) &
                                          (self.data["inzet_terplaatse_volgnummer"] == 1)]
                                .copy())
@@ -132,10 +133,10 @@ class ResponseTimeSampler():
         self.travel_time_dict = model_travel_time_per_vehicle(self.high_prio_data)
         self.onscene_time_rv_dict = fit_onscene_times(self.data)
 
-        if self.verbose: print("Creating response time generators...")
+        progress("Creating response time generators.", verbose=self.verbose)
         self._create_response_time_generators()
 
-        if self.verbose: print("Response time variables fitted.")
+        progress("Response time variables fitted.", verbose=self.verbose)
         self.fitted = True
 
     def _prep_data_for_fitting(self, incidents, deployments, stations,
@@ -159,18 +160,18 @@ class ResponseTimeSampler():
         save: boolean
             Whether to save the data to a csv file after preparing it.
         """
-        if self.verbose: print("Preprocessing and merging datasets...")
+        progress("Preprocessing and merging datasets.", verbose=self.verbose)
         data = prepare_data_for_response_time_analysis(incidents, deployments,
                                                        stations, vehicles)
 
-        if self.verbose: print("Adding OSRM distance and duration...")
+        progress("Adding OSRM distance and duration.", verbose=self.verbose)
         self.data = add_osrm_distance_and_duration(data, osrm_host=osrm_host)
 
         if save:
-            if self.verbose: print("Saving file...")
+            progress("Saving file.", verbose=self.verbose)
             self.data.to_csv(os.path.join(self.data_dir, self.file_name), index=False)
 
-        if self.verbose: print("Data prepared for fitting.")
+        progress("Data prepared for fitting.", verbose=self.verbose)
 
     def set_custom_stations(self, station_locations, station_names,
                             location_col="hub_vak_bk"):
@@ -396,8 +397,10 @@ class IncidentSampler():
     >>>           .format(t, type_, loc, prio, vehicles, func))
     """
 
+    predictors = ["prophet", "basic"]
+
     def __init__(self, incidents, deployments, vehicle_types, locations, start_time=None,
-                 end_time=None, predictor="prophet", fc_dir="/data", verbose=True):
+                 end_time=None, predictor="basic", fc_dir="/data", verbose=True):
         """ Initialize all properties by extracting probabilities from the data. """
         self.incidents = incidents[
                 np.in1d(incidents["hub_vak_bk"].fillna(0).astype(int).astype(str), locations)]
@@ -414,7 +417,7 @@ class IncidentSampler():
 
         self.incident_time_generator = self._incident_time_generator()
 
-        if self.verbose: print("IncidentSampler ready for simulation.")
+        progress("IncidentSampler ready for simulation.", verbose=self.verbose)
 
     def _infer_incident_types(self):
         """ Create list of incident types based on provided data. """
@@ -452,7 +455,7 @@ class IncidentSampler():
         self.sampling_dict = self.predictor.create_sampling_dict(start_time, end_time,
                                                                  incident_types)
         self.T = len(self.sampling_dict)
-        self.lambdas = 60 / np.array([d['beta'] for d in self.sampling_dict.values()])
+        self.lambdas = np.array([d['lambda'] for d in self.sampling_dict.values()])
 
     def _assign_predictor(self, predictor, fc_dir):
         """ Initialize incident rate predictor and assign to property.
@@ -464,11 +467,17 @@ class IncidentSampler():
             only supports predictor='prophet'.
         """
         if predictor == "prophet":
-            if self.verbose: print("Initializing incident rate predictor...")
-            self.predictor = ProphetIncidentPredictor(load_forecast=True, fc_dir=fc_dir,
-                                                      verbose=True)
+            progress("Initializing ProphetIncidentPredictor...", verbose=self.verbose)
+            predictor_cls = ProphetIncidentPredictor
+            
+        elif predictor == "basic":
+            progress("Initializing BasicLambdaForecaster...", verbose=self.verbose)
+            predictor_cls = BasicLambdaForecaster
+
         else:
-            raise ValueError("Currently, only predictor='prophet' is supported.")
+            raise ValueError("'predictor' must be one of {}.".format(predictors))
+
+        self.predictor = predictor_cls(load_forecast=True, fc_dir=fc_dir, verbose=self.verbose)
 
     def _create_incident_types(self):
         """ Initialize incident types with their characteristics.
@@ -477,18 +486,18 @@ class IncidentSampler():
         type-specific distributions about priority, required vehicles,
         and demand locations.
         """
-        if self.verbose: print("Getting priority probabilities..")
+        progress("Getting priority probabilities.", verbose=self.verbose)
         prio_probs = get_prio_probabilities_per_type(self.incidents)
 
-        if self.verbose: print("Getting vehicle requirement probabilities...")
+        progress("Getting vehicle requirement probabilities.", verbose=self.verbose)
         vehicle_probs = get_vehicle_requirements_probabilities(self.incidents,
                                                                self.deployments,
                                                                self.vehicle_types)
 
-        if self.verbose: print("Getting spatial distributions...")
+        progress("Getting spatial distributions.", verbose=self.verbose)
         location_probs = get_spatial_distribution_per_type(self.incidents)
 
-        if self.verbose: print("Initializing incident types...")
+        progress("Initializing incident types.", verbose=self.verbose)
         self.incident_types = {t: IncidentType(prio_probs[t], vehicle_probs[t],
                                location_probs[t]) for t in self.types}
 
@@ -498,10 +507,10 @@ class IncidentSampler():
         Creates a dictionary of DemandLocation objects. Each such object has its
         own distribution over building functions that is used during sampling.
         """
-        if self.verbose: print("Getting building function probabilities...")
+        progress("Getting building function probabilities.", verbose=self.verbose)
         building_probs = get_building_function_probabilities(self.incidents)
 
-        if self.verbose: print("Initializing demand locations")
+        progress("Initializing demand locations", verbose=self.verbose)
         self.locations = {l: DemandLocation(l, building_probs[l])
                           for l in building_probs.keys()}
 

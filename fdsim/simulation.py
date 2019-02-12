@@ -6,6 +6,7 @@ import pickle
 from fdsim.sampling import IncidentSampler, ResponseTimeSampler
 from fdsim.objects import Vehicle, FireStation
 from fdsim.dispatching import ShortestDurationDispatcher
+from fdsim.helpers import progress
 
 
 class Simulator():
@@ -108,7 +109,7 @@ class Simulator():
     def __init__(self, incidents, deployments, stations, resource_allocation,
                  load_response_data=True, load_time_matrix=True, save_response_data=False,
                  save_time_matrix=False, vehicle_types=["TS", "RV", "HV", "WO"],
-                 predictor="prophet", start_time=None, end_time=None, data_dir="data",
+                 predictor="basic", start_time=None, end_time=None, data_dir="data",
                  osrm_host="http://192.168.56.101:5000", location_col="hub_vak_bk",
                  verbose=True):
 
@@ -156,7 +157,7 @@ class Simulator():
             self.end_time = self.isampler.sampling_dict[
                 np.max(list(self.isampler.sampling_dict.keys()))]["time"]
 
-        if self.verbose: print("Simulator is ready. At your service.")
+        progress("Simulator is ready. At your service.", verbose=self.verbose)
 
     @staticmethod
     def _preprocess_resource_allocation(resource_allocation):
@@ -505,7 +506,7 @@ class Simulator():
             self.simulate_single_incident()
 
         self._prepare_results()
-        print("Simulated {} incidents. See Simulator.results for the results.".format(N))
+        progress("Simulated {} incidents. See Simulator.results for the results.".format(N))
 
     def _simulate_single_period(self):
         """ Simulate a specific period a single time.
@@ -555,14 +556,14 @@ class Simulator():
 
         logs = []
         for i in range(n):
-            print("\rSimulating period: {} - {}. Run: {}/{}"
-                  .format(self.start_time, self.end_time, i + 1, n), end="")
+            progress("\rSimulating period: {} - {}. Run: {}/{}"
+                     .format(self.start_time, self.end_time, i + 1, n), end="")
             log = self._simulate_single_period()
             log["run"] = i + 1
             logs.append(log)
 
         self.results = pd.concat(logs, axis=0, ignore_index=True)
-        print("\nDone. See Simulator.results for the log.")
+        progress("\nDone. See Simulator.results for the log.")
 
     def _initialize_log(self, N):
         """ Create an empty log.
@@ -609,7 +610,7 @@ class Simulator():
             self.log[self.log_index, :] = values
         except IndexError:
             # if ran out of array size, add rows and continue
-            print("Log full at: {} entries, log extended.".format(self.log_index))
+            progress("Log full at: {} entries, log extended.".format(self.log_index))
             self.log = np.concatenate([self.log,
                                        np.empty(self.log.shape, dtype=object)],
                                       axis=0)
@@ -729,7 +730,7 @@ class Simulator():
         resource_allocation["kazerne"] = station_names
         self.set_resource_allocation(resource_allocation)
 
-        if self.verbose: print("Custom station locations set.")
+        progress("Custom station locations set.")
 
     def move_station(self, station_name, new_location, keep_name=True, new_name=None):
         """ Move an existing station to a new location.
@@ -762,8 +763,7 @@ class Simulator():
             resource_allocation["kazerne"].iloc[station_index] = new_name
         self.set_resource_allocation(resource_allocation)
 
-        if self.verbose:
-            print("Station moved to {} and vehicles re-initialized".format(new_location))
+        progress("Station moved to {} and vehicles re-initialized".format(new_location))
 
     def reset_stations(self):
         """ Reset station locations and names to the original stations from the data. """
@@ -845,8 +845,8 @@ class Simulator():
         for day in days_of_week:
             for h in hours:
                 self.stations[station_name].set_status(day, h, status_num)
-        print("Set status of {} to {} (code: {}) for hours {} on days {}"
-              .format(station_name, status, status_num, hours, days_of_week))
+        progress("Set status of {} to {} (code: {}) for hours {} on days {}"
+                 .format(station_name, status, status_num, hours, days_of_week))
 
     def remove_station_status_cycle(self, station_name):
         self.stations[station_name].reset_status_cycle()

@@ -18,6 +18,25 @@ class BaseIncidentPredictor(object):
     """
     __metaclass__ = ABCMeta
 
+    def __init__(self, load_forecast=True, fc_dir="data/forecasts", verbose=True):
+        self.verbose = verbose
+        self.fc_dir = fc_dir
+        self.forecast = None
+
+        if load_forecast:
+            try:
+                self.forecast = pd.read_csv(os.path.join(self.fc_dir,
+                                                         self.file_name))
+                self.types = [c for c in self.forecast.columns if c != "ds"]
+            except FileNotFoundError:
+                warnings.warn("No forecast found, check if 'fc_dir' specifies"
+                              " the right directory. If you didn't mean to "
+                              "load a forecast, initialize with "
+                              "'load_forecast=False'. Instance intialized "
+                              "without forecast. Create one by running "
+                              "self.fit() and then .predict()."
+                              "Given directory: {}.".format(self.fc_dir))
+
     @abstractmethod
     def fit(self, data):
         """ Fit the model on the data. """
@@ -113,7 +132,7 @@ class BaseIncidentPredictor(object):
 
         # process date time range and remove it from the forecast
         fc = fc[(fc["ds"] >= start_time) & (fc["ds"] <= end_time)]
-        timestamps = fc["ds"].copy().values
+        timestamps = fc["ds"].copy()
         del fc["ds"]
 
         # create the dictionary
@@ -123,7 +142,7 @@ class BaseIncidentPredictor(object):
             self.sampling_dict[i] = {"type_distribution": np.array(rts) / np.sum(rts),
                                      "beta":  1 / np.sum(rts) * 60,
                                      "lambda": np.sum(rts),
-                                     "time": timestamps[i]}
+                                     "time": timestamps.iloc[i]}
 
         # save start and end time for future reference
         self.sampling_start_time = start_time
@@ -140,8 +159,9 @@ class BaseIncidentPredictor(object):
 
     def save_forecast(self):
         """ Save forecasted incident rate to csv. """
-        self.forecast.to_csv(os.path.join(self.fc_dir, self.file_name),
-                             index=False)
+        path = os.path.join(self.fc_dir, self.file_name)
+        self.forecast.to_csv(path, index=False)
+        progress("Forecast saved to {}.".format(path), verbose=self.verbose)
 
     def get_forecast(self):
         """ Return the DataFrame with the forecast. """
@@ -263,29 +283,12 @@ class ProphetIncidentPredictor(BaseIncidentPredictor):
 
     __name__ = "ProphetIncidentPredictor"
 
-    def __init__(self, load_forecast=True, fc_dir="data/forecasts",
-                 verbose=True):
+    def __init__(self, **kwargs):
 
-        self.verbose = verbose
         self.fitted = False
         self.file_name = "prophet_forecast.csv"
-        self.fc_dir = fc_dir
-        self.forecast = None
         self.sampling_dict = None
-
-        if load_forecast:
-            try:
-                self.forecast = pd.read_csv(os.path.join(self.fc_dir,
-                                                         self.file_name))
-                self.types = [c for c in self.forecast.columns if c != "ds"]
-            except FileNotFoundError:
-                warnings.warn("No forecast found, check if 'fc_dir' specifies"
-                              " the right directory. If you didn't mean to "
-                              "load a forecast, initialize with "
-                              "'load_forecast=False'. Instance intialized "
-                              "without forecast. Create one by running "
-                              "IncidentPredictor.fit() and then .predict()."
-                              "Given directory: {}.".format(self.fc_dir))
+        super().__init__(**kwargs)
 
     def fit(self, data, types=None):
         """ Perform time series decomposition using Prophet.
@@ -313,14 +316,12 @@ class ProphetIncidentPredictor(BaseIncidentPredictor):
         if types is not None:
             self.types = types
         else:
-            if self.verbose:
-                print("No incident types specified, using all types in data.")
+            progress("No incident types given, using all types in data.", verbose=self.verbose)
 
             self.types = [t for t in data["dim_incident_incident_type"]
                           .unique() if t not in ["nan", "NVT", np.nan]]
 
-        if self.verbose:
-            print("Preparing incident data for analysis...")
+        progress("Preparing incident data for analysis...", verbose=self.verbose)
 
         self.incidents = self._prep_data_for_prediction(data)
         self.incidents["hourly_datetime"] = self._create_date_hour_column(
@@ -334,8 +335,7 @@ class ProphetIncidentPredictor(BaseIncidentPredictor):
 
         self.models_dict = dict()
         for type_ in self.types:
-            if self.verbose:
-                print("Fitting model for type {}...".format(type_))
+            progress("Fitting model for type {}...".format(type_), verbose=self.verbose)
 
             m = Prophet()
             dfprophet = self._create_prophet_data(self.incidents, self.time_index, type_=type_)
@@ -343,8 +343,7 @@ class ProphetIncidentPredictor(BaseIncidentPredictor):
             self.models_dict[type_] = m
 
         self.fitted = True
-        if self.verbose:
-            print("Models fitted.")
+        progress("Models fitted.", verbose=self.verbose)
 
     def predict(self, periods=365*24, freq="H", save=False, future=None):
         """ Forecast the incident rate using Prophet.
@@ -375,8 +374,7 @@ class ProphetIncidentPredictor(BaseIncidentPredictor):
         forecast_dict = dict(ds=future["ds"].tolist())
 
         for type_ in self.types:
-            if self.verbose:
-                print("Predicting incident rates for {}".format(type_))
+            progress("Predicting incident rates for {}".format(type_), verbose=self.verbose)
 
             forecast_dict[type_] = np.maximum(0.0, self.models_dict[type_]
                                               .predict(future)["yhat"]
@@ -384,12 +382,9 @@ class ProphetIncidentPredictor(BaseIncidentPredictor):
 
         self.forecast = pd.DataFrame(forecast_dict)
 
-        msg = ""
+        progress("Forecast made.", verbose=self.verbose)
         if save:
             self.save_forecast()
-            msg = " and saved to " + os.path.join(self.fc_dir, self.file_name)
-        if self.verbose:
-            print("Predictions made" + msg + ".")
 
     def _prep_data_for_prediction(self, incidents):
         """ Format time columns.
@@ -468,13 +463,16 @@ class BasicLambdaForecaster(BaseIncidentPredictor):
     id_col, date_col, month_col, day_name_col, hour_col: str, optional,
         The column names indicating respectively the id of the incident, the date,
         month number, name of the week day, hour of day in [0, 24).
+    **kwargs: dict,
+        Parameters passed to BaseIncidentPredictor.
     """
 
     def __init__(self, ignore_dates=None, id_col="dim_incident_id",
                  type_col="dim_incident_incident_type", date_col="dim_datum_datum",
                  month_col="dim_datum_maand_nr", month_day_col="dim_datum_maand_dag_nr",
-                 day_name_col="dim_datum_dag_naam_nl", hour_col="dim_tijd_uur", verbose=True):
-        """Store names of columns for use in multiple methods."""
+                 day_name_col="dim_datum_dag_naam_nl", hour_col="dim_tijd_uur", **kwargs):
+
+        # store names of columns for use in multiple methods.
         self.id_col = id_col
         self.type_col = type_col
         self.date_col = date_col
@@ -483,8 +481,7 @@ class BasicLambdaForecaster(BaseIncidentPredictor):
         self.hour_col = hour_col
         self.month_day_col = month_day_col
 
-        self.verbose = verbose
-
+        # save dates to ignore during modeling
         if ignore_dates is not None:
             ignore_dates = np.array(ignore_dates)
             if isinstance(ignore_dates[0], str):
@@ -500,6 +497,9 @@ class BasicLambdaForecaster(BaseIncidentPredictor):
         self.lambdas = None
         self.fitted = False
         self.day_col = "weekday_number"
+        self.file_name = "basic_lambda_forecast.csv"
+
+        super().__init__(**kwargs)
 
     def fit(self, data, last_n_years=8, fit_nye=True):
         """Obtain arrival rates from the data.
@@ -524,18 +524,21 @@ class BasicLambdaForecaster(BaseIncidentPredictor):
         data[self.day_col] = data[self.day_name_col].map(
             {"Maandag": 1, "Dinsdag": 2, "Woensdag": 3, "Donderdag": 4,
              "Vrijdag": 5, "Zaterdag": 6, "Zondag": 7})
-        data[self.month_col] = data[self.month_col].astype(int)
+        for col in [self.month_col, self.day_col, self.hour_col, self.month_day_col]:
+            data[col] = data[col].astype(float).astype(int)
 
         # obtain lambdas
         progress("Obtaining lambdas..", verbose=self.verbose)
         lambdas = (data.groupby([self.type_col, self.month_col])
                        .apply(lambda x: self._get_incidents_per_hour_of_week(x, x.name[1])))
+
         # reindex on a complete set of types, months, and weekdays
         new_index = pd.MultiIndex.from_product(
             [data[self.type_col].unique(), np.arange(1, 13), np.arange(1, 8)],
             names=[self.type_col, self.month_col, self.day_col]
         )
         lambdas = lambdas.reindex(new_index, fill_value=0)
+
         # stack the hour columns and use types as columns instead
         self.lambdas = lambdas.stack().unstack(self.type_col, fill_value=0)
         progress("Lambdas obtained.", verbose=self.verbose)
@@ -548,7 +551,7 @@ class BasicLambdaForecaster(BaseIncidentPredictor):
         progress("Fit completed.", verbose=self.verbose)
         self.fitted = True
 
-    def predict(self, start, end, predict_nye=True):
+    def predict(self, start, end, predict_nye=True, save=False):
         """Forecast arrival rates for a given future period and save it under 'self.forecast'.
 
         Parameters
@@ -564,11 +567,18 @@ class BasicLambdaForecaster(BaseIncidentPredictor):
 
         def replace_with_other(df1, df2, match_cols, fill_cols):
             """Fill one dataframe with values from another, based on specified columns."""
+            assert len(match_cols) == 3, "This function needs three columns to match on."
             for i in range(len(df2)):
-                mask = ((df1[cols[0]] == df2[cols[0]].iloc[i]) &
-                        (df1[cols[1]] == df2[cols[1]].iloc[i]) &
-                        (df1[cols[2]] == df2[cols[2]].iloc[i]))
+                mask = ((df1[match_cols[0]] == df2[match_cols[0]].iloc[i]) &
+                        (df1[match_cols[1]] == df2[match_cols[1]].iloc[i]) &
+                        (df1[match_cols[2]] == df2[match_cols[2]].iloc[i]))
+                # print("sample mask: {}".format(mask[0:10]))
+                # print("sum mask: {}".format(np.sum(mask)))
+                # print("values to use from df2: ")
+                # print(df2[fill_cols].iloc[i, :].values)
                 df1.loc[mask, fill_cols] = df2[fill_cols].iloc[i, :].values
+                # print("new values in df1:")
+                # print(df1.loc[mask, fill_cols])
 
             return df1
 
@@ -608,7 +618,10 @@ class BasicLambdaForecaster(BaseIncidentPredictor):
         df.drop([self.month_col, self.day_col, self.month_day_col, self.hour_col],
                 axis=1, inplace=True)
         self.forecast = df
-        progress("Forecast created (see '.forecast' attribute).", verbose=self.verbose)
+        progress("Forecast created.", verbose=self.verbose)
+
+        if save:
+            self.save_forecast()
 
     def _filter_data(self, data, remove_unfinished_month=True, last_n_years=5):
         """Filter out some stuff for proper analysis."""
@@ -669,6 +682,7 @@ class BasicLambdaForecaster(BaseIncidentPredictor):
         reindexed = grouped.reindex(indx, fill_value=0).reset_index()
         means = pd.Series(reindexed.groupby(self.hour_col)[self.id_col].mean(),
                           name=day_of_week)
+
         return means
 
     def _get_incidents_per_hour_of_week(self, data, month=None):
@@ -685,9 +699,7 @@ class BasicLambdaForecaster(BaseIncidentPredictor):
         lambdas: pd.DataFrame,
             The arrival rates in a table with a row for every day of the week and a column
             for every hour of the day."""
-        grouped = pd.DataFrame(
-            {d: self._get_incidents_per_hour_of_day(data, day_of_week=d, month=month)
-             for d in np.arange(1, 8)}).T
+        grouped = pd.DataFrame({d: self._get_incidents_per_hour_of_day(data, day_of_week=d, month=month) for d in np.arange(1, 8)}).T
         grouped.index.rename(self.day_col, inplace=True)
         return grouped
 
