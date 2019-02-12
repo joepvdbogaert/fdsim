@@ -1,5 +1,6 @@
 from pyproj import Proj, transform
 import pickle
+import time
 
 
 def lonlat_to_xy(lon, lat):
@@ -47,3 +48,8 @@ def quick_load_simulator(path="data/simulator.pickle"):
     sim.rsampler._create_response_time_generators()
     sim.isampler.reset_time()
     return sim
+
+
+def progress(text, verbose=True):
+    if verbose:
+        print("[{}] {}".format(time.strftime("%Y-%m-%d %H:%M:%S"), text))
