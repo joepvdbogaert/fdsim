@@ -1,6 +1,7 @@
 import numpy as np
 import pandas as pd
 from scipy import stats
+from fdsim.helpers import progress
 
 
 class Evaluator(object):
@@ -129,7 +130,8 @@ class Evaluator(object):
         metrics: pd.DataFrame,
             The calculated metrics.
         """
-        progress("Evaluating {} metrics.".format(len(self.metric_set_names)), verbose=self.verbose)
+        progress("Evaluating {} sets of metrics.".format(len(self.metric_set_names)),
+                 verbose=self.verbose)
         result_dict = {}
         for name in self.metric_set_names:
             progress("Evaluating {}.".format(name))
@@ -157,11 +159,14 @@ class Evaluator(object):
         # apply filters
         for f in self.filters:
             if metric_set[f] is not None:
+                progress("Filtering on {}.".format(f), verbose=self.verbose)
                 data = self._filter_data(data, self.filter_column_map[f], metric_set[f])
 
         if metric_set["first_only"]:
-            data = data.groupby(self.incident_id_col).apply(lambda x:
-                x.iloc[np.argmin(x[self.response_time_col].values), :]).copy()
+            progress("Keeping only first vehicle per incident.", verbose=self.verbose)
+            data.sort_values(self.response_time_col, inplace=True)
+            data.drop_duplicates(subset=[self.run_col, self.incident_id_col], inplace=True)
+            data.sort_values([self.run_col, self.incident_id_col], inplace=True)
 
         # add relevant performance measures to data
         if metric_set["measure"] == "response_time":
@@ -172,8 +177,9 @@ class Evaluator(object):
         if metric_set["measure"] == "delay":
             data["delay"] = data[self.response_time_col] - data[self.target_col]
             y_col = "delay"
-            
+
         # calculate metrics
+        progress("Calculating requested metrics.", verbose=self.verbose)
         results_per_run = self._calculate_descriptors_by_run(
             data,
             y_col=y_col,
@@ -182,13 +188,13 @@ class Evaluator(object):
             missing=metric_set["missing"],
             quantiles=metric_set["quantiles"]
         )
-        # confidence_intervals = self._get_confidence_intervals_per_column(results_per_run)
+
         return results_per_run
 
     @staticmethod
     def _filter_data(data, col, values):
         """Filter data while dealing with input variations."""
-        if isinstance(values, (list, np.array, pd.Series)):
+        if isinstance(values, (list, np.ndarray, pd.Series)):
             if len(values) > 1:
                 data = data[np.in1d(data[col], values)].copy()
             elif len(values) == 1:
@@ -196,14 +202,16 @@ class Evaluator(object):
             else:
                 raise ValueError("'values' cannot be empty. Received: {}.".format(values))
         else:  # 'values' is a single value (str, float, int, etc.)
-            data = data[dat[col] == values].copy()
+            data = data[data[col] == values].copy()
         return data
 
     def _calculate_descriptors_by_run(self, data, y_col, mean=True, std=True, missing=True,
                                       quantiles=None, measure_col="response_time"):
         """Calculate requested metrics for each simulation run."""
-        results = data.groupby(self.run_col)[y_col].apply(lambda x:
-            self._calculate_descriptors(x, mean=mean, std=std, missing=missing, quantiles=quantiles))
+        results = (data.groupby(self.run_col)[y_col]
+                       .apply(lambda x: self._calculate_descriptors(x, mean=mean, std=std,
+                                                                    missing=missing,
+                                                                    quantiles=quantiles)))
 
         return results.reset_index("run").reset_index(drop=True)
 
@@ -230,11 +238,16 @@ class Evaluator(object):
         return pd.DataFrame(descriptors, index=[x.name])
 
     def _get_confidence_intervals_per_column(self, data):
+
         N = len(data)
         means, stds = data.mean(axis=0), data.std(axis=0)
         df = pd.DataFrame({"mean": means, "std": stds}, index=means.index)
-        df[["LB", "UB"]] = df.apply(lambda x: stats.norm.interval(self.confidence,
-            loc=x["mean"], scale=x["std"]/np.sqrt(N)), axis=1).apply(pd.Series)
+        df[["LB", "UB"]] = (
+            df.apply(lambda x: stats.norm.interval(self.confidence, loc=x["mean"],
+                                                   scale=x["std"]/np.sqrt(N)),
+                     axis=1)
+              .apply(pd.Series)
+            )
         return df
 
     @staticmethod
