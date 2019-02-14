@@ -50,6 +50,7 @@ def quick_load_simulator(path="data/simulator.pickle"):
     return sim
 
 
-def progress(text, verbose=True, **kwargs):
+def progress(text, verbose=True, same_line=False, newline_end=True):
     if verbose:
-        print("[{}] {}".format(time.strftime("%Y-%m-%d %H:%M:%S"), text), **kwargs)
+        print("{}[{}] {}".format("\r" if same_line else "", time.strftime("%Y-%m-%d %H:%M:%S"),
+                                 text), end="\n" if newline_end else "")

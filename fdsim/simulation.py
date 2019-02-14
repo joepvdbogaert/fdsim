@@ -117,6 +117,8 @@ class Simulator():
         self.verbose = verbose
         self.station_data = stations
         self.vehicle_types = vehicle_types
+
+        progress("Start processing data.", verbose=self.verbose)
         self.resource_allocation = self._preprocess_resource_allocation(resource_allocation)
         self.original_resource_allocation = self.resource_allocation.copy()
 
@@ -128,6 +130,7 @@ class Simulator():
                           vehicle_types=vehicle_types, osrm_host=osrm_host,
                           save_prepared_data=save_response_data, location_col=location_col)
 
+        progress("Fitting incident distributions.", verbose=self.verbose)
         locations = list(self.rsampler.location_coords.keys())
         self.isampler = IncidentSampler(incidents, deployments, vehicle_types, locations,
                                         start_time=start_time, end_time=end_time,
@@ -438,6 +441,7 @@ class Simulator():
     def initialize_without_simulating(self, N=100000):
         self._initialize_log(N)
         self.vehicles = self._create_vehicles(self.resource_allocation)
+        self.stations = self._create_stations(self.resource_allocation)
         self._add_base_stations_to_vehicles()
         self.isampler.reset_time()
         self.t = 0
@@ -526,7 +530,7 @@ class Simulator():
         self._prepare_results()
         return self.results.copy()
 
-    def simulate_period(self, start_time=None, end_time=None, n=1):
+    def simulate_period(self, start_time=None, end_time=None, n=1, restart=True):
         """ Simulate a specific time period.
 
         Parameters
@@ -554,16 +558,32 @@ class Simulator():
             print("Simulation period changed to {} till {}."
                   .format(self.start_time, self.end_time))
 
+        # continue with higher run number if we don't restart
+        if restart:
+            first_run = 1
+        else:
+            first_run = int(self.results["run"].max() + 1)
+            previous_results = self.results.copy()
+            progress("Continue simulation at run {}.".format(first_run))
+        last_run = int(first_run + n - 1)
+
+        # loop over runs
         logs = []
-        for i in range(n):
-            progress("\rSimulating period: {} - {}. Run: {}/{}"
-                     .format(self.start_time, self.end_time, i + 1, n), end="")
+        for i in range(first_run, last_run + 1):
+            progress("Simulating period: {} - {}. Run: {}/{}"
+                     .format(self.start_time, self.end_time, i, last_run),
+                     same_line=True, newline_end=(i == last_run))
+            # execute run and save corresponding log
             log = self._simulate_single_period()
-            log["run"] = i + 1
+            log["run"] = i
             logs.append(log)
 
-        self.results = pd.concat(logs, axis=0, ignore_index=True)
-        progress("\nDone. See Simulator.results for the log.")
+        if restart:
+            self.results = pd.concat(logs, axis=0, ignore_index=True)
+        else:
+            self.results = pd.concat([previous_results] + logs, axis=0, ignore_index=True)
+
+        progress("Done. See Simulator.results for the log.")
 
     def _initialize_log(self, N):
         """ Create an empty log.
