@@ -291,7 +291,7 @@ def robust_remove_travel_time_outliers(data):
     min_speed = 1 / speed_treshold.loc["s_m"] * 3.6
 
     # filter data and return
-    df_filtered = data[(data["km_h"] > min_speed) & (data["km_h"] < max_speed)]
+    df_filtered = data[(data["km_h"] > min_speed) & (data["km_h"] < max_speed)].copy()
     df_filtered.drop(["km_h", "s_m"], axis=1, inplace=True)
     return df_filtered, min_speed, max_speed
 
@@ -516,7 +516,7 @@ def fit_turnout_times(data, prios=[1, 2, 3], vehicle_types=["TS", "RV", "HV", "W
     # filter stations
     data[station_col] = data[station_col].str.upper()
     if stations_to_exclude:
-        data = data[~np.isin(data[station_col], stations_to_exclude)]
+        data = data[~np.isin(data[station_col], stations_to_exclude)].copy()
 
     # add full time or part time indicator
     data = add_parttime_fulltime_indicator(data, station_col=station_col,
@@ -534,7 +534,7 @@ def fit_turnout_times(data, prios=[1, 2, 3], vehicle_types=["TS", "RV", "HV", "W
     # fit variables per incident type (use backup rv if not enough samples)
     rv_dict = {}
     for appointment in ["fulltime", "parttime"]:
-        df = data[data["fulltime"] == (appointment == "fulltime")]
+        df = data[data["fulltime"] == (appointment == "fulltime")].copy()
         backup_rv = fit_gamma_rv(df["turnout_time"], scale=100)
 
         df_rv_dict = {}
@@ -608,7 +608,7 @@ def fit_onscene_times(data, vehicles=["TS", "HV", "RV", "WO"], rough_lower_bound
     for type_ in types:
 
         # backup random variable per station
-        df_type = data[data["dim_incident_incident_type"] == type_]
+        df_type = data[data["dim_incident_incident_type"] == type_].copy()
 
         if sample_size_sufficient(df_type["inzet_duration"], max_mean_range=20*60,
                                   max_std_range=20*60):
