@@ -189,6 +189,7 @@ class Evaluator(object):
             quantiles=metric_set["quantiles"]
         )
 
+        results_per_run.drop("run", axis=1, inplace=True)
         return results_per_run
 
     @staticmethod
