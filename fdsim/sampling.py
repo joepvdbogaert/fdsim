@@ -221,7 +221,6 @@ class ResponseTimeSampler():
 
         if new_name != station_name:
             del self.station_coords[station_name]
-            del self.turnout_time_rv_dict[station_name]
 
         self._create_response_time_generators()
 
