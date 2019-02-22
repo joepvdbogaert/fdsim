@@ -3,6 +3,8 @@ import numpy as np
 from abc import abstractmethod, ABCMeta
 
 import statsmodels.api as sm
+import statsmodels.formula.api as smf
+
 from fractions import gcd
 from functools import reduce
 
@@ -111,6 +113,22 @@ class BaseExperiment():
 
         return final_n
 
+    @staticmethod
+    def anova_table(aov):
+        """Add effect sizes eta^2 and omega^2 to an ANOVA table from statsmodels."""
+        aov['mean_sq'] = aov[:]['sum_sq']/aov[:]['df']
+
+        aov['eta_sq'] = aov[:-1]['sum_sq']/sum(aov['sum_sq'])
+
+        aov['omega_sq'] = ((aov[:-1]['sum_sq'] - (aov[:-1]['df'] * aov['mean_sq'][-1])) / 
+                           (sum(aov['sum_sq']) + aov['mean_sq'][-1]))
+
+        cols = ['sum_sq', 'df', 'mean_sq', 'F', 'PR(>F)', 'eta_sq', 'omega_sq']
+        aov = aov[cols]
+        aov.columns = ['Sum of Squares', 'Degrees of Freedom', 'Mean Sum of Squares',
+                       'F-statistic', 'P-value', 'Effect (eta^2)', 'Effect (omega^2)']
+        return aov
+
 
 class ABTest(BaseExperiment):
     """Class that performs A/B test to evaluate two scenarios against each other (usually
@@ -173,6 +191,7 @@ class ABTest(BaseExperiment):
                                                "estimate B": estimate_B,
                                                "t-statistic": tstat,
                                                "p-value": pvalue,
+                                               "significant": pvalue < self.alpha / 2,
                                                "df": degrees}
         return test_results
 
@@ -188,13 +207,13 @@ class ABTest(BaseExperiment):
             if self.description_A is not None and self.description_B is not None:
                 print("Scenario A: {}".format(self.description_A))
                 print("Scenario B: {}".format(self.description_B))
-
+                print("------------------", end="\n\n")
             for name, f in self.test_results.items():
-                print("------------------------------------------------------------")
                 print("Measure: '{}'\n{}"
                       .format(name, self.evaluator.metric_sets[name]["description"]))
-                print("------------------------------")
-                print(pd.DataFrame(f).T, end="\n\n")
+                print("------------------------------------------------------------")
+                print(pd.DataFrame(f).T)
+                print("------------------------------------------------------------", end="\n\n")
 
     def _check_readiness(self):
         if ((self.simulator_A is not None) and (self.simulator_B is not None) and
@@ -214,3 +233,159 @@ class ABTest(BaseExperiment):
         )
         # n*2 since it returns the sample size per variant
         return self._get_final_n_runs(n*2, find_lcm=True)
+
+
+class MultiScenarioExperiment(BaseExperiment):
+
+    def __init__(self, evaluator=None, **kwargs):
+        super().__init__(**kwargs)
+        self.evaluator = evaluator
+        self.scenarios = {}
+        self.descriptions = {}
+
+    def add_scenario(self, simulator, name, description=None):
+        """Add an alternative scenario to the possible options."""
+        assert isinstance(name, str), "'name' must be a string. Got {}.".format(type(name))
+        assert isinstance(simulator, fdsim.simulation.Simulator), ("'simulator' must be an "
+            "instance of fdsim.simulation.Simulator. Got {}".format(type(simulator)))
+        assert name not in self.scenarios.keys(), ("Scenario {} already exists"
+            .format(name))
+
+        self.scenarios[name] = simulator
+        if description is not None:
+            self.descriptions[name] = description
+
+    def _determine_sample_size(self):
+        """Determine the required number of observations given the power, confidence, and
+        effect size."""
+        # solve power equation for number of observations (nobs)
+        total_n = sm.stats.FTestAnovaPower().solve_power(
+            effect_size=self.effect_size,
+            alpha=self.alpha,
+            power=self.power,
+            k_groups=len(self.scenarios),
+            nobs=None
+        )
+        return self._get_final_n_runs(total_n, k_groups=len(self.scenarios), find_lcm=True)
+
+    def run(self):
+        # determine number of runs per scenario
+        self.n_runs = self.forced_runs or self._determine_sample_size()
+        self.scenario_runs = int(np.ceil(self.n_runs / len(self.scenarios)))
+        # run scenarios
+        results_dict = {}
+        for scenario, sim in self.scenarios.items():
+            progress("Running scenario {} for {} runs.".format(scenario, self.scenario_runs))
+            sim.simulate_period(n=self.scenario_runs)
+            progress("Computing performance metrics.")
+            results_dict[scenario] = self.evaluator.evaluate(sim.results)
+            progress("Simulation of scenario {} completed.".format(scenario))
+
+        # for debugging:
+        self.results_dict = results_dict
+
+        progress("Simulation completed. Conducting statistical analysis on results.")
+        self.test_results = self.analyze(results_dict)
+        progress("Statistical tests performed and results obtained.")
+
+    def analyze(self, results_dict):
+        """Analyze the results using one-way ANOVA."""
+        # reorganize the data by measure and add scenario as column
+        metric_data = {}
+        for scenario, scenario_results in results_dict.items():
+            for metric_set, results in scenario_results.items():
+                results["scenario"] = scenario
+                if metric_set in metric_data.keys():  # concat on previous data
+                    metric_data[metric_set] = metric_data[metric_set].append(results, ignore_index=True)
+                else:  # create new entry in dictionary
+                    metric_data[metric_set] = results
+
+        # save for post-hoc analysis
+        self.metric_data = metric_data
+
+        # analyze results per metric using one-way ANOVA
+        anova_results = {}
+        for measure, data in metric_data.items():
+            tables = []
+            for ycol in [c for c in data.columns if c != "scenario"]:
+                # perform ANOVA
+                ols_results = smf.ols("Q('{}') ~ C(scenario)".format(ycol), data=data).fit()
+                table = self.anova_table(sm.stats.anova_lm(ols_results, typ=2))
+                table.index.rename("predictor", inplace=True)
+                table["target"] = ycol
+                table = table.reset_index(drop=False)
+                tables.append(table)
+
+            measure_table = pd.concat(tables, axis=0)
+            measure_table["predictor"].loc[measure_table["predictor"] == "C(scenario)"] = "scenario"
+            measure_table.set_index(["target", "predictor"], inplace=True)
+            measure_table["significant"] = measure_table["P-value"] < self.alpha / 2
+            anova_results[measure] = measure_table
+
+        significant_variable_dict = self.get_significant_results(anova_results)
+        tukey_results = self.perform_tukey(metric_data, significant_variable_dict)
+
+        self.anova_results = anova_results
+        self.tukey_results = tukey_results
+        return anova_results, tukey_results
+
+    def get_significant_results(self, anova_results):
+        """Find the dependent variables for which the scenario had a significant impact
+        based on the ANOVA results."""
+        target_dict = {}
+        for measure, df in anova_results.items():
+            df2 = df.reset_index()
+            df2 = df2[(df2["significant"] == True) & (df2["predictor"] == "scenario")]
+            targets = df2["target"].unique()
+            target_dict[measure] = targets
+
+        return target_dict
+
+    def perform_tukey(self, data_dict, target_dict, group_col="scenario"):
+        """Perform Tukey HSD post-hoc analysis to find the specific pairs of groups that had a
+        significantly different mean."""
+        outputs = {}
+        for measure, data in data_dict.items():
+            outputs[measure] = []
+            for col in target_dict[measure]:
+                tukey = sm.stats.multicomp.pairwise_tukeyhsd(data[col], data[group_col])
+                columns = tukey.summary().data[0]
+                summary = pd.DataFrame(tukey.summary().data[1:], columns=columns)
+                summary.insert(0, column="metric", value=col)
+                # add summary table to list
+                outputs[measure].append(summary)
+
+            if len(outputs[measure]) > 0:
+                outputs[measure] = pd.concat(outputs[measure], axis=0, ignore_index=True)
+            else:
+                outputs[measure] = None
+
+        return outputs
+
+    def print_results(self):
+        """Print the results of the ANOVA and Tukey analysis to give a quick overview of the
+        results."""
+        if (self.anova_results is None) and (self.tukey_results is None):
+            progress("Nothing to print.")
+        else:
+            print("------------------\nMultiple Scenarios Test Results{}\n------------------"
+                  .format(": " + self.name or ""))
+
+            if len(self.descriptions) > 0:
+                for name, description in self.descriptions.items():
+                    print("Scenario '{}': {}".format(name, description))
+                print("------------------", end="\n\n")
+
+            for measure, aov_table in self.anova_results.items():
+                print("\nMeasure: '{}'\n{}"
+                      .format(measure, self.evaluator.metric_sets[measure]["description"]),
+                      end="\n\n")
+                print("Analysis of Variance (ANOVA)")
+                print("------------------------------------------------------------")
+                print(aov_table)
+                print("------------------------------------------------------------", end="\n\n")
+
+                print("Tukey HSD post-hoc analysis: pairwise comparison of relevant groups")
+                print("------------------------------------------------------------")
+                print(self.tukey_results[measure])
+                print("------------------------------------------------------------", end="\n\n")
