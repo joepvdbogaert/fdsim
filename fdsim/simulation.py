@@ -719,6 +719,28 @@ class Simulator():
         resource_allocation.reset_index(inplace=True)
         self.set_resource_allocation(resource_allocation)
 
+    def set_crews(self, station_name, vehicle_type, number, appointment="ft"):
+        """ Set the number of vehicles for a specific station and vehicle_type.
+
+        Parameters
+        ----------
+        station_name: str,
+            The name of the station to change the vehicles for.
+        vehicle_type: str,
+            The type of vehicle to change the number of vehicles for.
+        number: int
+            The new number of vehicles of vehicle_type to assign to the station.
+        appointment: str,
+            One of ['ft', "pt"] for full time or part time crew respectively.
+        """
+        resource_allocation = self.resource_allocation.copy()
+        if "kazerne" in resource_allocation.columns:
+            resource_allocation.set_index("kazerne", inplace=True)
+        crew_col = vehicle_type + "_crew_" + appointment
+        resource_allocation.loc[station_name, crew_col] = number
+        resource_allocation.reset_index(inplace=True)
+        self.set_resource_allocation(resource_allocation)
+
     def set_station_locations(self, station_locations, resource_allocation, station_names=None):
         """ Assign custom locations of fire stations.
 
