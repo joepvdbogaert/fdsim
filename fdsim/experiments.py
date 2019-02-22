@@ -157,6 +157,11 @@ class ABTest(BaseExperiment):
         self.description_B = description
         self._check_readiness()
 
+    def set_evaluator(self, evaluator):
+        assert isinstance(evaluator, fdsim.evaluation.Evaluator), \
+            "Expected an instance of fdsim.evaluation.Evaluator as input."
+        self.evaluator = evaluator
+
     def run(self):
         if not self.ready:
             raise ValueError("Simulators A and B and an evaluator must be provided before"
@@ -199,15 +204,20 @@ class ABTest(BaseExperiment):
         if self.test_results is None:
             progress("Nothing to print.")
         else:
+            if self.name is None:
+                additional = ""
+            else:
+                additional = ": " + self.name
             print("------------------\nA/B Test Results{}\n------------------"
-                  .format(": " + self.name or ""))
+                  .format(additional))
             if self.description is not None:
                 print(self.description)
 
-            if self.description_A is not None and self.description_B is not None:
+            if (self.description_A is not None) and (self.description_B is not None):
                 print("Scenario A: {}".format(self.description_A))
                 print("Scenario B: {}".format(self.description_B))
                 print("------------------", end="\n\n")
+
             for name, f in self.test_results.items():
                 print("Measure: '{}'\n{}"
                       .format(name, self.evaluator.metric_sets[name]["description"]))
@@ -368,8 +378,12 @@ class MultiScenarioExperiment(BaseExperiment):
         if (self.anova_results is None) and (self.tukey_results is None):
             progress("Nothing to print.")
         else:
+            if self.name is None:
+                additional = ""
+            else:
+                additional = ": " + self.name
             print("------------------\nMultiple Scenarios Test Results{}\n------------------"
-                  .format(": " + self.name or ""))
+                  .format(additional))
 
             if len(self.descriptions) > 0:
                 for name, description in self.descriptions.items():
