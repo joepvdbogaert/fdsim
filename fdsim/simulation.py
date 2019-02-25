@@ -113,6 +113,7 @@ class Simulator():
                  osrm_host="http://192.168.56.101:5000", location_col="hub_vak_bk",
                  verbose=True):
 
+        self.stations_with_backups = []
         self.data_dir = data_dir
         self.verbose = verbose
         self.station_data = stations
@@ -357,6 +358,10 @@ class Simulator():
                 # send vehicles back to base recursively
                 if np.sum([self.vehicles[v].available_at_base() for v in base_vs]) > 0:
                     self._send_vehicle_to_base_recursively(vehicle.id)
+
+        # process backup protocols if any
+        for station_name in self.stations_with_backups:
+            self.stations[station_name].update_backups()
 
     def _return_vehicle_to_station(self, vehicle_id, to_base=True, station=None):
         """ Send a vehicle back to the station. """
@@ -873,26 +878,52 @@ class Simulator():
         for station in self.stations.values():
             station.reset_status_cycle()
 
-    # def assign_backup_crew(self, station):
-    #     """ Let the part time crew at a station come to the station when the full time crew
-    #     is dispatched in order to minimize response times for a second incident.
+    def activate_backup_protocol(self, station_name, vehicle_types=None):
+        """ Let the part time crew at a station come to the station when the full time crew
+        is dispatched in order to minimize response times for a second incident.
 
-    #     Parameters
-    #     ----------
-    #     station: str,
-    #         The station for which to use the backup protocol.
+        Parameters
+        ----------
+        station_name: str,
+            The name of the station for which to use the backup protocol in capitalized
+            letters (e.g., "VICTOR", "AMSTELVEEN", ...).
+        vehicle_types: array-like of str or None, optional (default: None),
+            The vehicle types for which to apply the backup protocol. Available types
+            are ["TS", "HV", "RV", "WO"]. If None, applies it to all types.
+        """
+        if vehicle_types is None:
+            vehicle_types = ["TS", "HV", "RV", "WO"]
 
-    #     Notes
-    #     -----
-    #     Make sure to provide the station name in all capitalized letters (e.g., 'VICTOR').
-    #     Currently only looks at TS type vehicles.
-    #     """
-    #     assert self.station_appointments[station] == "mixed", \
-    #         "This method is only applicable to stations with both full and part time crews."
-    #     assert len(self.base_vehicles[station]["TS"]) > 1, \
-    #         "Station must have at least 2 TS vehicles"
+        # see if this makes sense
+        makes_sense = {}
+        for vtype in vehicle_types:
+            ft, pt = self.stations[station_name].get_normal_crews(vtype)
+            if (ft > 0) and (pt > 0):
+                makes_sense[vtype] = True
+            else:
+                makes_sense[vtype] = False
 
-    #     tss = [self.vehicles[vid] for vid in self.base_vehicles[station]["TS"]]
-    #     fulltime_ts = [ts.id for ts in tss if ts.base_appointment == "fulltime"][0]
-    #     parttime_ts = [ts.id for ts in tss if ts.base_appointment == "parttime"][0]
-    #     self.vehicles[parttime_ts].assign_as_backup_for(fulltime_ts)
+        useful_vtypes = [key for key, value in makes_sense.items() if value]
+        assert len(useful_vtypes) > 0, ("Station {} has no vehicle type with both full time"
+                                        " and part time crews. Backup protocol therefore has"
+                                        " no effect. Canceling".format(station_name))
+
+        progress("Activating backup protocol for vehicle types {} of station {}"
+                 .format(useful_vtypes, station_name))
+        self.stations[station_name].activate_backup_protocol(vehicle_types=useful_vtypes)
+        self.stations_with_backups.append(station_name)
+
+    def remove_backup_protocol(self, station_name):
+        """Remove any backup protocols from a given station.
+
+        Parameters
+        ----------
+        station_name: str,
+            The name of the station in all capital letters.
+        """
+        self.stations[station_name].reset_backup_protocol()
+
+    def reset_all_backup_protocols(self):
+        """Remove all backup protocols from all stations."""
+        for station in self.stations.values():
+            station.reset_backup_protocol()

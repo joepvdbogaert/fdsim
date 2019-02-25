@@ -179,6 +179,7 @@ class FireStation():
         self.status_table = np.ones((7, 24)) * 2 # days by hours, 2 for normal operations
         self.operating_status = 2 # operating normally
         self.backup_protocol = False
+        self.backup_vtypes = None
         self.has_status_cycle = False
 
     def assign_base_vehicles(self, base_vehicles):
@@ -286,5 +287,36 @@ class FireStation():
                 raise ValueError("'status' should be one of [0, 1, 2]. Got: {}"
                                  .format(status))
 
-    def activate_backup_protocol(self):
+    def update_backups(self):
+        """Update crews if a backup protocol is being used."""
+        if self.backup_protocol:
+            if (not self.has_status_cycle) or (self.get_status(day, hour) == 2):
+                for vtype in self.backup_vtypes:
+                    normal_ft, normal_pt = self.get_normal_crews(vtype)
+                    current_ft, current_pt = self.get_crews(vtype)
+                    # call in part time crew
+                    if (current_ft == 0) and (current_pt > 0) and (normal_ft > 0):
+                        self.set_crews(vtype, current_ft + 1, current_pt - 1)
+                        self.in_backup[vtype] += 1
+                    # send crew back home
+                    elif (current_ft > 0) and (self.in_backup[vtype] > 0):
+                        self.set_crews(vtype, current_ft - self.in_backup[vtype], current_pt + self.in_backup[vtype])
+                        self.in_backup[vtype] = 0
+
+    def activate_backup_protocol(self, vehicle_types=None):
         self.backup_protocol = True
+        if vehicle_types is not None:
+            if isinstance(vehicle_types, str):
+                self.backup_vtypes = [vehicle_types]
+            else:
+                self.backup_vtypes = vehicle_types
+        else:
+            self.backup_vtypes = self.base_vtypes
+
+        self.in_backup = {vtype: 0 for vtype in self.backup_vtypes}
+
+    def reset_backup_protocol(self):
+        """Remove any currently active backup protocols."""
+        self.backup_protocol = False
+        del self.in_backup
+        self.backup_vtypes = []
