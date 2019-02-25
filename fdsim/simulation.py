@@ -238,30 +238,6 @@ class Simulator():
 
         return station_dict
 
-    # def assign_backup_crew(self, station):
-    #     """ Let the part time crew at a station come to the station when the full time crew
-    #     is dispatched in order to minimize response times for a second incident.
-
-    #     Parameters
-    #     ----------
-    #     station: str,
-    #         The station for which to use the backup protocol.
-
-    #     Notes
-    #     -----
-    #     Make sure to provide the station name in all capitalized letters (e.g., 'VICTOR').
-    #     Currently only looks at TS type vehicles.
-    #     """
-    #     assert self.station_appointments[station] == "mixed", \
-    #         "This method is only applicable to stations with both full and part time crews."
-    #     assert len(self.base_vehicles[station]["TS"]) > 1, \
-    #         "Station must have at least 2 TS vehicles"
-
-    #     tss = [self.vehicles[vid] for vid in self.base_vehicles[station]["TS"]]
-    #     fulltime_ts = [ts.id for ts in tss if ts.base_appointment == "fulltime"][0]
-    #     parttime_ts = [ts.id for ts in tss if ts.base_appointment == "parttime"][0]
-    #     self.vehicles[parttime_ts].assign_as_backup_for(fulltime_ts)
-
     def _add_base_stations_to_vehicles(self):
         """ After initializing stations and vehicles, assign FireStation objects to Vehicles
         and the other way around.
@@ -897,83 +873,26 @@ class Simulator():
         for station in self.stations.values():
             station.reset_status_cycle()
 
-    def evaluate_performance(self, metric="on_time", vehicles=None, priorities=None,
-                             group_by=None, by_incident=True):
-        """ Evaluate the performance of a finished simulation run.
+    # def assign_backup_crew(self, station):
+    #     """ Let the part time crew at a station come to the station when the full time crew
+    #     is dispatched in order to minimize response times for a second incident.
 
-        Parameters
-        ----------
-        metric: str, one of {'on_time', 'mean_response_time', 'mean_lateness'}, optional
-            The performance metric to calculate. The available metrics are defined as follows:
-            - on_time_deployments: the proportion of deployments that arrived within the
-                given norm/target.
-            - mean_response_time: the mean response time in seconds.
-            - mean_lateness: the mean time in seconds that incidents were too late
-                (deployments that were on time have a lateness of zero).
+    #     Parameters
+    #     ----------
+    #     station: str,
+    #         The station for which to use the backup protocol.
 
-            Defaults to "on_time".
-        vehicles: str or array-like of strings, optional
-            The vehicle types to take into account when calculating the metric.
-        priorities: int or array-like of integers in [1,3], optional
-            The incident priorities to include when calculating the metric.
-        group_by: str or array-like of strings, optional
-            The columns to group by when calculating the performance metric.
+    #     Notes
+    #     -----
+    #     Make sure to provide the station name in all capitalized letters (e.g., 'VICTOR').
+    #     Currently only looks at TS type vehicles.
+    #     """
+    #     assert self.station_appointments[station] == "mixed", \
+    #         "This method is only applicable to stations with both full and part time crews."
+    #     assert len(self.base_vehicles[station]["TS"]) > 1, \
+    #         "Station must have at least 2 TS vehicles"
 
-        Returns
-        -------
-        A float, representing the calculated metric if group_by is None. A pd.DataFrame with
-        columns [group_by[0], ..., groupby[n], <metric>], where <metric> is the name of the
-        metric and the values in that column are the scores per group.
-        """
-        def calc_on_time(data):
-            return np.mean(data["response_time"] <= data["target"])
-
-        def calc_mean_response_time(data):
-            return data["response_time"].mean()
-
-        def calc_mean_lateness(data):
-            return np.mean(np.maximum(0, data["response_time"] - data["target"]))
-
-        # Process input variations
-        if isinstance(vehicles, str):
-            vehicles = [vehicles]
-        if isinstance(priorities, int):
-            priorities = [priorities]
-
-        # Set evaluation function
-        if metric == "on_time":
-            func = calc_on_time
-        elif metric == "mean_response_time":
-            func = calc_mean_response_time
-        elif metric == "mean_lateness":
-            func = calc_mean_lateness
-        else:
-            raise ValueError("'metric' must be one of "
-                             "['on_time', 'mean_response_time', 'mean_lateness'].")
-
-        # Filter data
-        results_filtered = self.results.copy()
-        if vehicles is not None:
-            results_filtered = results_filtered[np.isin(results_filtered["vehicle_type"],
-                                                        vehicles)]
-        if priorities is not None:
-            results_filtered = results_filtered[np.isin(results_filtered["priority"],
-                                                        priorities)]
-
-        if by_incident:
-            # only use first arriving TS, ignore if no TS deployed
-            results_filtered = results_filtered[results_filtered["vehicle_type"] == "TS"]
-            results_filtered = (results_filtered.sort_values("response_time")
-                                                .groupby("t", as_index=False)
-                                                .first()
-                                                .dropna())
-        # Calculate metric (by group)
-        if group_by is not None:
-            performance = (results_filtered.groupby(group_by)
-                                           .apply(func)
-                                           .reset_index()
-                                           .rename(columns={0: metric}))
-        else:
-            performance = func(results_filtered)
-
-        return performance
+    #     tss = [self.vehicles[vid] for vid in self.base_vehicles[station]["TS"]]
+    #     fulltime_ts = [ts.id for ts in tss if ts.base_appointment == "fulltime"][0]
+    #     parttime_ts = [ts.id for ts in tss if ts.base_appointment == "parttime"][0]
+    #     self.vehicles[parttime_ts].assign_as_backup_for(fulltime_ts)
