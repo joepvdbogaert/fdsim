@@ -33,15 +33,20 @@ class Evaluator(object):
     """
 
     measures = ["response_time", "on_time", "delay"]
-    filters = ["locations", "prios", "vehicles", "incident_types", "objects"]
+    filters = ["locations", "prios", "vehicles", "incident_types", "objects", "hours",
+               "days_of_week"]
+    hour_col = "hour"
+    weekday_col = "weekday"
 
     def __init__(self, response_time_col="response_time", target_col="target", run_col="run",
                  prio_col="priority", location_col="location", vehicle_col="vehicle_type",
                  incident_type_col="incident_type", object_col="object_function",
-                 incident_id_col="t", by_run=True, confidence=0.95, verbose=True):
+                 incident_id_col="t", datetime_col="time", by_run=True, confidence=0.95, verbose=True):
+
         # storage of metrics to compute
         self.metric_sets = {}
         self.metric_set_names = []
+
         # column names
         self.response_time_col = response_time_col
         self.target_col = target_col
@@ -52,13 +57,16 @@ class Evaluator(object):
         self.itype_col = incident_type_col
         self.object_col = object_col
         self.incident_id_col = incident_id_col
+        self.datetime_col = datetime_col
 
         # column map for filtering
         self.filter_column_map = {"locations": self.loc_col,
                                   "prios": self.prio_col,
                                   "vehicles": self.vtype_col,
                                   "incident_types": self.itype_col,
-                                  "objects": self.object_col}
+                                  "objects": self.object_col,
+                                  "hours": self.hour_col,
+                                  "days_of_week": self.weekday_col}
 
         # other parameters
         self.by_run = by_run
@@ -68,7 +76,7 @@ class Evaluator(object):
     def add_metric(self, measure, name=None, description=None, mean=True, std=True,
                    missing=True, quantiles=[0.5, 0.75, 0.90, 0.95, 0.98, 0.99],  prios=None,
                    locations=None, vehicles=None, incident_types=None, objects=None,
-                   first_only=False):
+                   hours=None, days_of_week=None, first_only=False):
         """Add metrics that should be evaluated.
 
         Parameters
@@ -93,6 +101,11 @@ class Evaluator(object):
         locations, vehicles, incident_types, objects: array(str), optional (default: None),
             Which locations, vehicles types, incident types and object functions to include
             during evaluation. If None, uses all values.
+        hours: array-like of ints or None, optional (default: None),
+            Which hours of dat to incorporate during evaluation. Values must be integers in
+            [0, 23].
+        days_of_week: array-like of ints or None, optional (default: None),
+            Which days of the week to incorporate during evaluation. Monday = 0, ..., Sunday = 6.
         first_only: boolean, optional (default: False),
             Whether to calculate the metrics for only the first arriving vehicle per incident
             (True) or to evaluate all vehicles (False).
@@ -107,10 +120,14 @@ class Evaluator(object):
         assert measure in self.measures, "'measure' must be one of {}. Received {}" \
             .format(measure, self.measures)
 
+        if locations is not None:
+            locations = np.array(locations, dtype=str)
+
         self.metric_sets[name] = {"mean": mean, "std": std, "missing": missing,
                                   "quantiles": quantiles, "locations": locations,
                                   "prios": prios, "vehicles": vehicles,
                                   "incident_types": incident_types, "objects": objects,
+                                  "hours": hours, "days_of_week": days_of_week,
                                   "first_only": first_only, "description": description,
                                   "measure": measure}
 
@@ -192,9 +209,13 @@ class Evaluator(object):
         results_per_run.drop("run", axis=1, inplace=True)
         return results_per_run
 
-    @staticmethod
-    def _filter_data(data, col, values):
+    def _filter_data(self, data, col, values):
         """Filter data while dealing with input variations."""
+        if col == self.hour_col:
+            data[self.hour_col] = pd.to_datetime(data[self.datetime_col]).dt.hour
+        if col == self.weekday_col:
+            data[self.weekday_col] = pd.to_datetime(data[self.datetime_col]).apply(lambda x: x.isoweekday())
+
         if isinstance(values, (list, np.ndarray, pd.Series)):
             if len(values) > 1:
                 data = data[np.in1d(data[col], values)].copy()
@@ -223,7 +244,7 @@ class Evaluator(object):
         descriptors = {}
 
         if missing:
-            descriptors["n_missing"] = n_missing
+            # descriptors["n_missing"] = n_missing
             descriptors["prop_missing"] = n_missing / length
 
         if mean:
