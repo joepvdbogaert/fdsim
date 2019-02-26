@@ -717,7 +717,8 @@ class Simulator():
         resource_allocation = self.resource_allocation.copy()
         if "kazerne" in resource_allocation.columns:
             resource_allocation.set_index("kazerne", inplace=True)
-        crew_col = vehicle_type + "_crew_" + appointment
+        crew_type = self.stations[station_name].crew_map[vehicle_type]
+        crew_col = crew_type + "_crew_" + appointment
         resource_allocation.loc[station_name, crew_col] = number
         resource_allocation.reset_index(inplace=True)
         self.set_resource_allocation(resource_allocation)
