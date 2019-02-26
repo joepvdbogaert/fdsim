@@ -222,7 +222,26 @@ class ResponseTimeSampler():
         if new_name != station_name:
             del self.station_coords[station_name]
 
-        self._create_response_time_generators()
+    def add_station(self, station_name, location):
+        """ Move the location of a single station.
+
+        Parameters
+        ----------
+        station_name: str
+            The name of the new station.
+        location: str or tuple(float, float)
+            The location of the new station. If a string is passed, it is interpreted
+            as the identifier of the demand location to move the station to. If a tuple of
+            floats is passed, it is interpreted as the new coordinates in decimal (long, lat).
+        """
+        if isinstance(location, tuple):
+            self.station_coords[station_name] = location
+        elif isinstance(location, str):
+            self.station_coords[station_name] = self.location_coords[location]
+        else:
+            raise ValueError("location cannot be interpreted. Pass either a tuple of "
+                             "decimal longitude and latitude or a string representing "
+                             "a demand location.")
 
     def reset_stations(self):
         """ Reset the station locations and names to those obtained from the data. """

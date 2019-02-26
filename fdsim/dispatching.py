@@ -166,6 +166,29 @@ class ShortestDurationDispatcher(BaseDispatcher):
                              "decimal longitude and latitude or a string representing a "
                              "demand lcoation.")
 
+    def add_station(self, station_name, location):
+        """ Create a new fire station at a specified location.
+
+        Parameters
+        ----------
+        station_name: str
+            The name of the station to move.
+        new_location: str or tuple(float, float)
+            The new location of the station. Either a string matching the ID of a demand
+            location or a tuple of decimal longitude latitude.
+        """
+        if isinstance(location, str):
+            location_index = np.nonzero(self.matrix_names == location)[0][0]
+            distances = np.array([self.time_matrix[location_index, :]])
+            self.time_matrix_stations = np.append(self.time_matrix_stations, distances, axis=0)
+            self.station_names = np.append(self.station_names, station_name)
+        elif isinstance(location, tuple):
+            raise NotImplementedError("Setting location by coordinates not implemented yet.")
+        else:
+            raise ValueError("location cannot be interpreted. Pass either a tuple of "
+                             "decimal longitude and latitude or a string representing a "
+                             "demand lcoation.")
+
     def reset_stations(self):
         """ Reset station locations and names to the original stations from the data. """
         self._prepare_dispatch_information()

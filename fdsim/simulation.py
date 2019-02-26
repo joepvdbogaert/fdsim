@@ -191,7 +191,7 @@ class Simulator():
 
         for r in range(len(vs)):
 
-            for _ in range(vs[0].iloc[r]):
+            for _ in range(int(vs[0].iloc[r])):
 
                 this_id = "VEHICLE " + str(id_counter)
                 vtype = vs["level_0"].iloc[r]
@@ -675,8 +675,8 @@ class Simulator():
             there is a column called 'kazerne' that specifies the station names.
             In the latter case, the index is ignored.
         """
-        resource_allocation = self._preprocess_resource_allocation(resource_allocation)
-        self.resource_allocation = resource_allocation.copy()
+        resources = self._preprocess_resource_allocation(resource_allocation)
+        self.resource_allocation = resources.copy()
         self.vehicles = self._create_vehicles(self.resource_allocation)
         self.stations = self._create_stations(self.resource_allocation)
         self._add_base_stations_to_vehicles()
@@ -733,10 +733,6 @@ class Simulator():
         resource_allocation: pd.DataFrame
             The vehicles and crews to assign to each station. Every row corresponds to
             a station in the same order as station_locations and station_names.
-            Expects the column names to match the vehicle types (default:
-            ["TS", "RV", "HV", "WO"]) and crew types. Other columns are ignored,
-            including 'kazerne', since 'station_names' is used to define the names
-            of the stations.
         station_names: array-like of strings, optional
             The custom names of the stations. If None, will use 'STATION 1', 'STATION 2', etc.
         """
@@ -788,6 +784,55 @@ class Simulator():
         self.set_resource_allocation(resource_allocation)
 
         progress("Station moved to {} and vehicles re-initialized".format(new_location))
+
+    def add_station(self, station_name, location, **resources):
+        """Add a new fire station at a specified location without changing existing stations.
+
+        Parameters
+        ----------
+        station_name: str,
+            The name of the new station.
+        location: str,
+            The identifier of the demand location to put the new station in.
+        **resources: key-value pairs,
+            Resources to assign to the station. Keys must match the columns of
+            'resource_allocation' and values must be integers.
+        """
+        resource_allocation = self.resource_allocation.copy()
+        station_name = station_name.upper()
+
+        # initialize row with zeros
+        if "kazerne" in resource_allocation.columns:
+            resource_allocation.set_index("kazerne", inplace=True)
+
+        resource_allocation.loc[station_name] = np.zeros(resource_allocation.shape[1])
+
+        # process resources
+        for col, value in resources.items():
+            resource_allocation.loc[station_name, col] = int(value)
+
+        resource_allocation = resource_allocation.astype(int)
+        resource_allocation.reset_index(drop=False, inplace=True)
+
+        self.rsampler.add_station(station_name, location)
+        self.dispatcher.add_station(station_name, location)
+
+        self.set_resource_allocation(resource_allocation)
+
+    def remove_station(self, station_name):
+        """Remove a fire station from the current set of stations.
+
+        Parameters
+        ----------
+        station_name: str,
+            The name of the station to remove.
+        """
+        resource_allocation = self.resource_allocation.copy()
+        resource_allocation = (resource_allocation.set_index("kazerne")
+                                                   .drop(station_name, axis=0)
+                                                   .reset_index())
+
+        self.set_resource_allocation(resource_allocation)
 
     def reset_stations(self):
         """ Reset station locations and names to the original stations from the data. """
