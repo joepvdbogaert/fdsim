@@ -1,5 +1,9 @@
+import os
 import pandas as pd
 import numpy as np
+import itertools
+import copy
+
 from abc import abstractmethod, ABCMeta
 
 import statsmodels.api as sm
@@ -8,7 +12,7 @@ import statsmodels.formula.api as smf
 from fractions import gcd
 from functools import reduce
 
-from fdsim.helpers import progress
+from fdsim.helpers import progress, quick_load_simulator
 import fdsim
 
 
@@ -48,6 +52,20 @@ class BaseExperiment():
         assert isinstance(evaluator, fdsim.evaluation.Evaluator), "Expected an instance" \
             " of type fdsim.evaluation.Evaluator. Got {}.".format(type(evaluator))
         self.evaluator = evaluator
+
+    @staticmethod
+    def _reorganize_results_by_metric(results_dict):
+        """Reorganize the data by measure and add scenario as column."""
+        metric_data = {}
+        for scenario, scenario_results in results_dict.items():
+            for metric_set, results in scenario_results.items():
+                results["scenario"] = scenario
+                if metric_set in metric_data.keys():  # concat on previous data
+                    metric_data[metric_set] = metric_data[metric_set].append(results, ignore_index=True)
+                else:  # create new entry in dictionary
+                    metric_data[metric_set] = results
+
+        return metric_data
 
     def _lcm_two_numbers(self, x, y):
         """This function takes two integers and returns the Least Common Multiple."""
@@ -189,6 +207,7 @@ class ABTest(BaseExperiment):
             dfA = results_A[set_name]
             dfB = results_B[set_name]
             test_results[set_name] = {}
+
             for col in dfA.columns:
                 tstat, pvalue, degrees = sm.stats.ttest_ind(dfA[col], dfB[col])
                 estimate_A, estimate_B = dfA[col].mean(), dfB[col].mean()
@@ -291,9 +310,6 @@ class MultiScenarioExperiment(BaseExperiment):
             results_dict[scenario] = self.evaluator.evaluate(sim.results)
             progress("Simulation of scenario {} completed.".format(scenario))
 
-        # for debugging:
-        self.results_dict = results_dict
-
         progress("Simulation completed. Conducting statistical analysis on results.")
         self.test_results = self.analyze(results_dict)
         progress("Statistical tests performed and results obtained.")
@@ -301,15 +317,7 @@ class MultiScenarioExperiment(BaseExperiment):
     def analyze(self, results_dict):
         """Analyze the results using one-way ANOVA."""
         # reorganize the data by measure and add scenario as column
-        metric_data = {}
-        for scenario, scenario_results in results_dict.items():
-            for metric_set, results in scenario_results.items():
-                results["scenario"] = scenario
-                if metric_set in metric_data.keys():  # concat on previous data
-                    metric_data[metric_set] = metric_data[metric_set].append(results, ignore_index=True)
-                else:  # create new entry in dictionary
-                    metric_data[metric_set] = results
-
+        metric_data = self._reorganize_results_by_metric(results_dict)
         # save for post-hoc analysis
         self.metric_data = metric_data
 
@@ -403,3 +411,351 @@ class MultiScenarioExperiment(BaseExperiment):
                 print("------------------------------------------------------------")
                 print(self.tukey_results[measure])
                 print("------------------------------------------------------------", end="\n\n")
+
+
+class MultiFactorExperiment(BaseExperiment):
+    """Experiment to evaluate multiple scenarios against each other."""
+
+    all_factor_types = ["resources", "location", "station_status", "add_station",
+                        "remove_station", "activate_backup", "remove_backup"]
+
+    def __init__(self, base_simulator, evaluator=None, cache_path="cache", **kwargs):
+
+        self.evaluator = evaluator
+        self.factors = {}
+        self.factor_types = {}
+
+        if not os.path.isdir(cache_path):
+            os.mkdir(cache_path)
+        self.cache_path = cache_path
+
+        self.base_simulator = base_simulator
+        self.base_simulator.save_simulator_object(os.path.join(cache_path, "base.fdsim"))
+
+        super().__init__(**kwargs)
+
+    def add_factor(self, factor_name, factor_type, levels=None):
+        """Add a factor to the experiment. A factor is a variable that can take on at least
+        two levels (categories).
+
+        Parameters
+        ----------
+        factor_name: str,
+            The name of the factor.
+        factor_type: str,
+            What type of factor it concerns. One of ["vehicles", "station_location",
+            "station_status", "add_station", "remove_station", "crew"].
+        levels: dict, optional (default: None),
+            A nested dictionary specifying the parameters for the different levels, like:
+            {'level_name_1' -> {'parameter 1' -> value1, 'parameter 2' -> value2, etc.},
+             'level_name_2' -> {'parameter 1' -> value1, 'parameter 2' -> value2, etc.}}.
+            If None, then it must be specified later by using self.add_factor_level().
+
+        Notes
+        -----
+        The base_simulator's settings are also considered a level. I.e., make sure that the
+        base case includes a relevant setting for each factor that is added.
+
+        Examples
+        --------
+        >>> # add resources factor
+        >>> experiment = MultiFactorExperiment(base_simulator)
+        >>> levels = {"extra-ts": {"station_name": "HENDRIK", "TS": 1, "TS_crew_ft": 1}}
+        >>> experiment.add_factor("TS-Hendrik", "resources", levels=levels)
+
+        >>> # add station_location factor with two alternatives to the base case
+        >>> levels = {"at N200": {"new_location": "13781452"}}
+                      "other-loc": {"new_location": "13781363"}}
+        >>> experiment.add_factor("Osdorp loc", "location", "OSDORP", levels=levels)
+
+        >>> # set a station status cycle
+        >>> levels = {"Closed at night":
+                        {"station_name": "VICTOR", "start": 23, "end": 7, "status": "closed"},
+                      "Office hours":
+                        {"station_name": "VICTOR", "start": 18, "end": 8, "status": "closed"}
+                     }
+        >>> experiment.add_factor("Status Victor", "station_status", levels=levels)
+
+        >>> # add a station
+        >>> levels = {"Bovenkerk":
+                        {"station_name": "BOVENKERK", location": "13710002", "TS": 1, "TS_ft": 1},
+                      "Harbor":
+                        {"station_name": "HARBOR", location": "13710001", "TS": 1, "TS_ft": 1}
+                     }
+        >>> experiment.add_factor("New station location", "add_station", levels=levels)
+
+        >>> # remove a station
+        >>> levels = {"Hendrik": {"station_name": "HENDRIK"},
+                      "Nico": {"station_name": "NICO"}}
+        >>> experiment.add_factor("Remove station", "remove_station", levels=levels)
+        """
+        if not factor_type in self.all_factor_types:
+            raise ValueError("'{}' is not a valid factor type. Must be one of {}."
+                .format(factor_type, self.all_factor_types))
+
+        self.factor_types[factor_name] = factor_type
+        self.factors[factor_name] = {"base": {}}
+        if levels is not None:
+            for i, (level_name, level_params) in enumerate(levels.items()):
+                assert isinstance(level_params, dict), ("'levels' must be a nested dictionary"
+                                                        " of at least 2 deep. Found a {} on "
+                                                        "the second level."
+                                                        .format(type(level_params)))
+
+                self.factors[factor_name][level_name] = level_params
+
+    def add_factor_level(self, factor_name, level_name, params):
+        """Add a single level to an existing factor.
+
+        Parameters
+        ----------
+        factor_name: str,
+            The name of the factor to add a level to.
+        level_name: str,
+            The name of the new level.
+        params: dict,
+            The parameters to pass to the underlying method of fdsim.simulation.Simulator.
+        """
+        assert isinstance(factor_name, str), "'factor_name' must be a string."
+        assert isinstance(level_name, str), "'factor_name' must be a string."
+        assert level_name not in self.factors[factor_name].keys(), ("Level {} already exists"
+            " in factor {}. Please choose another name.".format(level_name, factor_name))
+        assert isinstance(params, dict), "'params' must be a dictionary."
+
+        self.factors[factor_name][level_name] = params
+
+    def run(self):
+        """Run the experiment."""
+        all_levels = [[level for level in factor.keys()] for factor in self.factors.values()]
+        # determine sample size
+        self.n_runs = self.forced_runs or self._determine_sample_size()
+        self.n_scenarios = np.prod([len(levels) for levels in all_levels])
+        self.scenario_runs = int(np.ceil(self.n_runs / self.n_scenarios))
+        progress("Simulating {} runs in total ({} per scenario)."
+                 .format(self.n_runs, self.scenario_runs))
+
+        results_dict = {}
+        scenario_dict = {}
+
+        # run full factorial experiment design
+        for k, level_combo in enumerate(itertools.product(*all_levels)):
+            progress("Setting up combination {} / {}.".format(k + 1, self.n_scenarios))
+            # load base simulator and apply level values
+            simulator = quick_load_simulator(os.path.join(self.cache_path, "base.fdsim"))
+            scenario = {}
+            for i, level_name in enumerate(level_combo):
+                factor_name = list(self.factors.keys())[i]
+                scenario[factor_name] = level_name
+                if level_name != "base":
+                    simulator = self._apply_factor_level(simulator, factor_name, level_name)
+                else:
+                    # progress("Using base settings for factor {}.".format(factor_name))
+                    pass
+
+            # save experiment setup
+            scenario_dict[k] = scenario
+            progress("Factor levels: {}.".format(scenario))
+
+            # run experiment
+            progress("Running simulation for {} runs.".format(  self.scenario_runs))
+            simulator.simulate_period(n=self.scenario_runs)
+            progress("Computing performance metrics.")
+            results_dict[k] = self.evaluator.evaluate(simulator.results)
+            progress("Simulation of combination {} / {} completed.".format(k, self.n_scenarios))
+
+        # for debugging
+        self.results_dict = results_dict
+        self.scenario_dict = scenario_dict
+        progress("results_dict and scenario_dict saved as attributes for debugging.")
+
+        progress("Simulation completed. Conducting statistical analysis on results.")
+        self.anova_results, self.tukey_results = self.analyze(results_dict, scenario_dict)
+
+    def analyze(self, results_dict, scenario_dict):
+        # reorganize the data by measure and add scenario as column
+        metric_data = self._reorganize_results_by_metric(results_dict)
+
+        # save for post-hoc analysis
+        self.metric_data = metric_data
+
+        progress("Adding used factor levels to results data.")
+        # add factor information to data
+        factor_names = list(self.factors.keys())
+        for measure, data in metric_data.items():
+            for fn in factor_names:
+                data[fn] = data["scenario"].apply(lambda k: scenario_dict[k][fn])
+
+        # create right hand side (rhs) for regression formula
+        predictors = ["C(Q('{}'))".format(v) for v in factor_names]
+        rhs = " + ".join(predictors)
+        progress("Right hand side for OLS: {}".format(rhs))
+
+        # analyze results per metric using multi-way ANOVA
+        anova_results = {}
+        for measure, data in metric_data.items():
+            data.drop("scenario", axis=1, inplace=True)
+            tables = []
+            for ycol in [c for c in data.columns if c not in factor_names]:
+                # perform ANOVA
+                ols_results = smf.ols("Q('{}') ~ {}".format(ycol, rhs), data=data).fit()
+                table = self.anova_table(sm.stats.anova_lm(ols_results, typ=2))
+                table.index.rename("factor", inplace=True)
+                table.insert(0, column="metric", value=ycol)
+                table = table.reset_index(drop=False)
+                tables.append(table)
+
+            measure_table = pd.concat(tables, axis=0)
+            measure_table["significant"] = measure_table["P-value"] < self.alpha / 2
+            measure_table["factor"].loc[measure_table["factor"] != "Residual"] = \
+                measure_table["factor"].loc[measure_table["factor"] != "Residual"].str[5:-3]
+            anova_results[measure] = measure_table
+
+        significant_variable_dict = self.get_significant_results(anova_results)
+        tukey_results = self.perform_tukey(metric_data, significant_variable_dict)
+
+        return anova_results, tukey_results
+
+    def _apply_factor_level(self, simulator, factor_name, level_name):
+        """Apply a factor level to a Simulator.
+
+        Parameters
+        ----------
+        simulator: fdsim.simulation.Simulator,
+            The simulator object to apply the settings to.
+        factor_name: str,
+            The name of the factor to change the level for.
+        level_name: str,
+            The name of the level to apply.
+
+        Returns
+        -------
+        simulator: fdsim.simulation.Simulator,
+            The simulator with adjusted settings.
+        """
+        level_params = copy.copy(self.factors[factor_name][level_name])
+        station_name = level_params.pop("station_name")
+
+        if self.factor_types[factor_name] == "resources":
+
+            rs = simulator.resource_allocation.copy()
+            rs.set_index("kazerne", inplace=True)
+            cols = rs.columns
+
+            for param, value in level_params.items():
+
+                if param in cols:
+                    rs.loc[station_name, param] = value
+
+            rs = rs.astype(int).reset_index(drop=False)
+            simulator.set_resource_allocation(rs)
+
+        elif self.factor_types[factor_name] == "location":
+
+            location = level_params.pop("location")
+            simulator.move_station(station_name, location, **level_params)
+
+        elif self.factor_types[factor_name] == "station_status":
+
+            start = level_params.pop("start_hour")
+            end = level_params.pop("end_hour")
+            simulator.set_daily_station_status(station_name, start, end, **level_params)
+
+        elif self.factor_types[factor_name] == "add_station":
+
+            location = level_params.pop("location")
+            simulator.add_station(station_name, location, **level_params)
+
+        elif self.factor_types[factor_name] == "remove_station":
+
+            simulator.remove_station(station_name)
+
+        elif self.factor_types[factor_name] == "activate_backup":
+
+            simulator.activate_backup_protocol(station_name, **level_params)
+
+        elif self.factor_types[factor_name] == "remove_backup":
+
+            simulator.remove_backup_protocol(station_name)
+
+        return simulator
+
+    def get_significant_results(self, anova_results):
+        """Find the combinations of independent and dependent variables for which the scenario
+        had a significant impact based on the ANOVA results."""
+        sig_var_dict = {}
+        for measure, df in anova_results.items():
+                df2 = df.reset_index()
+                df2 = df2[(df2["significant"] == True) & (df2["factor"] != "Residual")]
+                tuples = df2.apply(lambda x: (x["factor"], x["metric"]), axis=1)
+                tuples = tuples.tolist()
+                sig_var_dict[measure] = tuples
+
+        return sig_var_dict
+
+    def perform_tukey(self, data_dict, var_dict):
+        """Perform Tukey HSD post-hoc analysis to find the specific pairs of groups that had a
+        significantly different mean."""
+        outputs = {}
+        for measure, data in data_dict.items():
+            outputs[measure] = []
+            for predictor, target in var_dict[measure]:
+                tukey = sm.stats.multicomp.pairwise_tukeyhsd(data[target], data[predictor])
+                columns = tukey.summary().data[0]
+                summary = pd.DataFrame(tukey.summary().data[1:], columns=columns)
+                summary.insert(0, column="factor", value=predictor)
+                summary.insert(0, column="metric", value=target)
+                # add summary table to list
+                outputs[measure].append(summary)
+
+            if len(outputs[measure]) > 0:
+                outputs[measure] = pd.concat(outputs[measure], axis=0, ignore_index=True)
+            else:
+                outputs[measure] = None
+
+        return outputs
+
+    def print_results(self):
+        """Print the results of the ANOVA and Tukey analysis to give a quick overview of the
+        results."""
+        if (self.anova_results is None) and (self.tukey_results is None):
+            progress("Nothing to print.")
+        else:
+            if self.name is None:
+                additional = ""
+            else:
+                additional = ": " + self.name
+            print("------------------\nMultiple Factors Experiment Results{}\n------------------"
+                  .format(additional))
+
+            if len(self.factors) > 0:
+                print("Factors:\n--------")
+                for name, levels in self.factors.items():
+                    print("Factor '{}' with levels: {}.".format(name, list(levels.keys())))
+                print("------------------", end="\n\n")
+
+            for measure, aov_table in self.anova_results.items():
+                print("\nMeasure: '{}'\n{}"
+                      .format(measure, self.evaluator.metric_sets[measure]["description"]),
+                      end="\n\n")
+                print("Analysis of Variance (ANOVA)")
+                print("------------------------------------------------------------")
+                print(aov_table)
+                print("------------------------------------------------------------", end="\n\n")
+
+                print("Tukey HSD post-hoc analysis: pairwise comparison of relevant groups")
+                print("------------------------------------------------------------")
+                print(self.tukey_results[measure])
+                print("------------------------------------------------------------", end="\n\n")
+
+    def _determine_sample_size(self):
+        # solve equation for number of observations (nobs)
+        group_sizes = [len(self.factors[f].keys()) for f in self.factors.keys()]
+        n = sm.stats.FTestAnovaPower().solve_power(
+            effect_size=self.effect_size,
+            alpha=self.alpha,
+            power=self.power,
+            k_groups=np.max(group_sizes),
+            nobs=None
+        )
+        progress("Statistically desired runs: {}".format(n))
+        return self._get_final_n_runs(n, k_groups=group_sizes, find_lcm=True)
