@@ -151,7 +151,7 @@ class Evaluator(object):
                  verbose=self.verbose)
         result_dict = {}
         for name in self.metric_set_names:
-            progress("Evaluating {}.".format(name))
+            progress("Evaluating {}.".format(name), verbose=self.verbose)
             result_dict[name] = self._evaluate_metric_set(log, self.metric_sets[name])
 
         progress("Evaluation completed.", verbose=self.verbose)
