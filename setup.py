@@ -10,5 +10,6 @@ setup(name='fdsim',
       license='None',
       packages=['fdsim'],
       zip_safe=False,
+      install_requires=[],
       setup_requires=["pytest-runner"],
       tests_require=["pytest"])
