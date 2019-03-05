@@ -17,7 +17,6 @@ import sys
 sys.path.insert(0, os.path.abspath('../fdsim'))
 sys.path.insert(0, os.path.abspath('..'))
 
-
 # -- Project information -----------------------------------------------------
 
 project = 'fdsim'
@@ -75,8 +74,19 @@ pygments_style = None
 
 # ADDED MANUALLY ---
 # exclude modules dependent on C-libraries by mocking imports
-autodoc_mock_imports = ["scipy", "numpy", "gdal", "pyproj", "pandas", "geopandas", "matplotlib", "sklearn", "pystan",
-                        "fbprophet"]
+autodoc_mock_imports = ["scipy", "numpy", "gdal", "pyproj", "pandas", "geopandas", "matplotlib",
+                        "sklearn", "pystan", "fbprophet"]
+
+from unittest.mock import MagicMock
+
+class Mock(MagicMock):
+    @classmethod
+    def __getattr__(cls, name):
+        return MagicMock()
+
+MOCK_MODULES = ["scipy", "numpy", "gdal", "pyproj", "pandas", "geopandas", "matplotlib",
+                "sklearn", "pystan", "fbprophet"]
+sys.modules.update((mod_name, Mock()) for mod_name in MOCK_MODULES)
 # --- END ADDED PARTS
 
 # -- Options for HTML output -------------------------------------------------
