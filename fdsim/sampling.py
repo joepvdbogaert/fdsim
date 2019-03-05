@@ -103,9 +103,9 @@ class ResponseTimeSampler():
               deployment)
             - Fits lognormal random variables to dispatch times per incident type.
             - Fits Gamma random variables to turnout time per station and type.
-            - Models the travel time as :math:`\alpha + \beta * \gamma (\theta, k) * \hat{t}`,
-              per vehicle type. Here :math:`\hat{t}` represents the OSRM estiamte of the
-              travel time and :math:`\gamma` is a random noise factor.
+            - Models the travel time as :math:`\\alpha + \\beta * \\gamma (\\theta, k) * \\hat{t}`,
+              per vehicle type. Here :math:`\\hat{t}` represents the OSRM estiamte of the
+              travel time and :math:`\\gamma` is a random noise factor.
             - Saves the station and demand location coordinates in dictionaries.
         """
         self.location_col = location_col
@@ -141,7 +141,7 @@ class ResponseTimeSampler():
 
     def _prep_data_for_fitting(self, incidents, deployments, stations,
                                vehicles, osrm_host, save):
-        """ Perform basic preprocessing and calculate OSRM estimates for travel time.
+        """Perform basic preprocessing and calculate OSRM estimates for travel time.
 
         Prepared data is stored under self.data. Nothing is returned.
 
@@ -175,7 +175,7 @@ class ResponseTimeSampler():
 
     def set_custom_stations(self, station_locations, station_names,
                             location_col="hub_vak_bk"):
-        """ Change the locations of stations to custom demand locations.
+        """Change the locations of stations to custom demand locations.
 
         Parameters
         ----------
@@ -197,7 +197,7 @@ class ResponseTimeSampler():
                 self.location_coords[station_locations[i]]
 
     def move_station(self, station_name, new_location, new_name):
-        """ Move the location of a single station.
+        """Move the location of a single station.
 
         Parameters
         ----------
@@ -223,7 +223,7 @@ class ResponseTimeSampler():
             del self.station_coords[station_name]
 
     def add_station(self, station_name, location):
-        """ Move the location of a single station.
+        """Move the location of a single station.
 
         Parameters
         ----------

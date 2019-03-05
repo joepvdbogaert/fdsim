@@ -13,9 +13,7 @@ from fdsim.helpers import progress
 
 
 class BaseIncidentPredictor(object):
-    """ Base class for incident predictors. Not useful to instantiate
-        on its own.
-    """
+    """Base class for incident predictors. Not useful to instantiate on its own."""
     __metaclass__ = ABCMeta
 
     def __init__(self, load_forecast=True, fc_dir="data/forecasts", verbose=True):
@@ -47,7 +45,7 @@ class BaseIncidentPredictor(object):
 
     @staticmethod
     def evaluate(y_true, y_predict, metric="RMSE"):
-        """ Evaluate a given prediction.
+        """Evaluate a given prediction.
 
         Parameters
         ----------
@@ -76,25 +74,8 @@ class BaseIncidentPredictor(object):
                              "Must be one of ['RMSE', 'MAE'].")
 
     def create_sampling_dict(self, start_time=None, end_time=None, incident_types=None):
-        """ Create a dictionary that can conveniently be used for
-            sampling random incidents based on the forecast.
-
-        Notes
-        -----
-        Stores three results:
-            - self.sampling_dict, a dictionary like:
-
-              {t -> {'type_distribution' -> probs,
-                     'beta' -> expected interarrival time in minutes,
-                     'time' -> the timestamp corresponding to start_time+t}
-              }
-
-              where t is an integer representing the time_units since the
-              start_time.
-            - self.sampling_start_time, timestamp of earliest time
-              in the dictionary.
-            - self.sampling_end_time, timestamp of the latest time
-              in the dictionary.
+        """Create a dictionary that can conveniently be used for
+        sampling random incidents based on the forecast.
 
         Parameters
         ----------
@@ -108,7 +89,23 @@ class BaseIncidentPredictor(object):
 
         Returns
         -------
-        The sampling dictionary as described above.
+        sampling_dict: dict,
+            The sampling dictionary as described below.
+
+        Notes
+        -----
+        Stores three results:
+            -self.sampling_dict, a dictionary like:
+             `{t -> {'type_distribution' -> probs,
+             'beta' -> expected interarrival time in minutes,
+             'time' -> the timestamp corresponding to start_time+t}}`
+             where t is an integer representing the time_units since the
+             start_time.
+            -self.sampling_start_time, timestamp of earliest time
+             in the dictionary.
+            -self.sampling_end_time, timestamp of the latest time
+             in the dictionary.
+
         """
         assert self.forecast is not None, \
             ("No forecast available, initiate with load_forecast=True "

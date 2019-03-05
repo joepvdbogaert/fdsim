@@ -133,7 +133,7 @@ class BaseExperiment():
 
     @staticmethod
     def anova_table(aov):
-        """Add effect sizes eta^2 and omega^2 to an ANOVA table from statsmodels."""
+        """Add effect sizes $\\eta^2 and \\omega^2$$ to an ANOVA table from statsmodels."""
         aov['mean_sq'] = aov[:]['sum_sq']/aov[:]['df']
 
         aov['eta_sq'] = aov[:-1]['sum_sq']/sum(aov['sum_sq'])
@@ -462,12 +462,12 @@ class MultiFactorExperiment(BaseExperiment):
         >>> experiment = MultiFactorExperiment(base_simulator)
         >>> levels = {"extra-ts": {"station_name": "HENDRIK", "TS": 1, "TS_crew_ft": 1}}
         >>> experiment.add_factor("TS-Hendrik", "resources", levels=levels)
-
+        >>>
         >>> # add station_location factor with two alternatives to the base case
         >>> levels = {"at N200": {"new_location": "13781452"}}
                       "other-loc": {"new_location": "13781363"}}
         >>> experiment.add_factor("Osdorp loc", "location", "OSDORP", levels=levels)
-
+        >>>
         >>> # set a station status cycle
         >>> levels = {"Closed at night":
                         {"station_name": "VICTOR", "start": 23, "end": 7, "status": "closed"},
@@ -475,7 +475,7 @@ class MultiFactorExperiment(BaseExperiment):
                         {"station_name": "VICTOR", "start": 18, "end": 8, "status": "closed"}
                      }
         >>> experiment.add_factor("Status Victor", "station_status", levels=levels)
-
+        >>>
         >>> # add a station
         >>> levels = {"Bovenkerk":
                         {"station_name": "BOVENKERK", location": "13710002", "TS": 1, "TS_ft": 1},
@@ -483,7 +483,7 @@ class MultiFactorExperiment(BaseExperiment):
                         {"station_name": "HARBOR", location": "13710001", "TS": 1, "TS_ft": 1}
                      }
         >>> experiment.add_factor("New station location", "add_station", levels=levels)
-
+        >>>
         >>> # remove a station
         >>> levels = {"Hendrik": {"station_name": "HENDRIK"},
                       "Nico": {"station_name": "NICO"}}

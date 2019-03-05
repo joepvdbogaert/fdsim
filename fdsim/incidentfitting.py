@@ -3,8 +3,8 @@ import pandas as pd
 
 
 def prepare_incidents_for_spatial_analysis(incidents):
-    """ Perform initial preprocessing tasks before fitting
-        parameters and obtaining probabilities from the incident data.
+    """Perform initial preprocessing tasks before fitting
+    parameters and obtaining probabilities from the incident data.
 
     Parameters
     ----------
@@ -38,8 +38,8 @@ def prepare_incidents_for_spatial_analysis(incidents):
 
 
 def get_prio_probabilities_per_type(incidents):
-    """ Create dictionary with the probabilities of having
-        priority 1, 2, and 3 for every incident type.
+    """Create dictionary with the probabilities of having
+    priority 1, 2, and 3 for every incident type.
 
     Parameters
     ----------
@@ -75,14 +75,14 @@ def get_prio_probabilities_per_type(incidents):
 
 
 def get_vehicle_requirements_probabilities(incidents, deployments, vehicles):
-    """ Calculate the probabilities of needing a number of vehicles of a
-        specific type for a specified incident type.
+    """Calculate the probabilities of needing a number of vehicles of a
+    specific type for a specified incident type.
 
     Parameters
     ----------
-    incidents: pd.DataFrame
+    incidents: pd.DataFrame,
         The log of incidetns to extract probabilities from.
-    deployments: pd.DataFrame
+    deployments: pd.DataFrame,
         The log of deployments to extract probabilities from.
 
     Returns
@@ -117,8 +117,8 @@ def get_vehicle_requirements_probabilities(incidents, deployments, vehicles):
 
 
 def get_spatial_distribution_per_type(incidents, location_col="hub_vak_bk"):
-    """ Obtain the distribution over demand locations for
-        every incident type.
+    """Obtain the distribution over demand locations for
+    every incident type.
 
     Parameters
     ----------
@@ -130,7 +130,7 @@ def get_spatial_distribution_per_type(incidents, location_col="hub_vak_bk"):
 
     Returns
     -------
-    Dictionary like {"type": {"location": probability}}.
+    Dictionary like `{"type": {"location": probability}}`.
     """
 
     # filter out missing values and other irrelevant observations
@@ -151,7 +151,7 @@ def get_spatial_distribution_per_type(incidents, location_col="hub_vak_bk"):
 
 
 def get_building_function_probabilities(incidents, location_col="hub_vak_bk"):
-    """ Find the distribution of building functions per demand location.
+    """Find the distribution of building functions per demand location.
 
     Parameters
     ----------
@@ -163,7 +163,7 @@ def get_building_function_probabilities(incidents, location_col="hub_vak_bk"):
     Returns
     -------
     A nested dictionary like:
-    {'location id' -> {'incident type' -> {'building function' -> probability}}}.
+    `{'location id' -> {'incident type' -> {'building function' -> probability}}}`.
     """
 
     incidents = prepare_incidents_for_spatial_analysis(incidents)

@@ -10,7 +10,7 @@ from fdsim.helpers import progress
 
 
 class Simulator():
-    """ Main simulator class that simulates incidents and reponses at the fire department.
+    """Main simulator class that simulates incidents and reponses at the fire department.
 
     Parameters
     ----------
@@ -23,7 +23,7 @@ class Simulator():
     resource_allocation: pd.DataFrame
         The allocation of vehicles and crews to stations. Expected columns:
         ["kazerne", "TS", "RV", "HV", "WO", "TS_crew_ft", "TS_crew_pt", "RVHV_crew_ft",
-         "RVHV_crew_pt", "WO_crew_ft", "WO_crew_pt"].
+        "RVHV_crew_pt", "WO_crew_ft", "WO_crew_pt"].
     load_response_data: boolean, optional
         Whether to load preprocessed response data from disk (True) or to
         calculate it using OSRM.
@@ -60,21 +60,19 @@ class Simulator():
 
     Examples
     --------
-    >>> from simulation import Simulator
+    >>> from fdsim.simulation import Simulator
     >>> sim = Simulator(incidents, deployments, stations, resource_allocation)
     >>> sim.simulate_n_incidents(10000)
     >>> sim.save_log("simulation_results.csv")
-
-    Continue simulating where you left of:
-    ```
+    >>>
+    >>> # Continue simulating where you left of:
     >>> sim.simulate_n_incidents(10000, restart=False)
-    ```
-    You can save the simulor object after initializing, so that next time you can
-    skip the initialization (requires the _pickle_ module):
-    ```
+    >>>
+    >>> # You can save the simulor object after initializing, so that next time you can
+    >>> # skip the initialization (requires the pickle module):
     >>> sim.save_simulator_object()
-    >>> sim = pickle.load(open('simulator.pickle', 'rb'))
-    ```
+    >>> from fdsim.helpers import quick_load_simulator
+    >>> sim = quick_load_simulator('simulator.pickle')
     """
     # the target response times
     target_dict = {'Bijeenkomstfunctie': 10,
@@ -512,7 +510,7 @@ class Simulator():
         return self.results.copy()
 
     def simulate_period(self, start_time=None, end_time=None, n=1, restart=True):
-        """ Simulate a specific time period.
+        """Simulate a specific time period.
 
         Parameters
         ----------
@@ -529,10 +527,11 @@ class Simulator():
 
         Notes
         -----
-        - The simulation is started from a "base" state for all n simulation runs. This means
+        -The simulation is started from a "base" state for all n simulation runs. This means
         all vehicles are available and at their base stations.
-        - An additional column (`run`) is added to the log/results, denoting the number
+        -An additional column (`run`) is added to the log/results, denoting the number
         of the run/experiment.
+
         """
         if (start_time is not None) or (end_time is not None):
             self.set_simulation_period(start_time, end_time)

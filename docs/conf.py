@@ -73,6 +73,11 @@ exclude_patterns = ['_build', 'Thumbs.db', '.DS_Store']
 # The name of the Pygments (syntax highlighting) style to use.
 pygments_style = None
 
+# ADDED MANUALLY ---
+# exclude modules dependent on C-libraries by mocking imports
+autodoc_mock_imports = ["scipy", "numpy", "gdal", "pyproj", "pandas", "geopandas", "matplotlib", "sklearn", "pystan",
+                        "fbprophet"]
+# --- END ADDED PARTS
 
 # -- Options for HTML output -------------------------------------------------
 
