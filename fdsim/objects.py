@@ -77,8 +77,11 @@ class Vehicle():
 
     def relocate(self, station_name, coords):
         self.assign_crew()
-        self.current_station_name = station_name
-        self.coords = coords
+        if station_name == self.base_station_name:
+            self.return_to_base()
+        else:
+            self.current_station_name = station_name
+            self.coords = coords
 
     def is_at_base(self):
         return self.current_station_name == self.base_station_name
