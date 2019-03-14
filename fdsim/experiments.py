@@ -219,7 +219,7 @@ class ABTest(BaseExperiment):
                                                "df": degrees}
         return test_results
 
-    def print_results(self):
+    def print_results(self, to_latex=False):
         if self.test_results is None:
             progress("Nothing to print.")
         else:
@@ -241,7 +241,10 @@ class ABTest(BaseExperiment):
                 print("Measure: '{}'\n{}"
                       .format(name, self.evaluator.metric_sets[name]["description"]))
                 print("------------------------------------------------------------")
-                print(pd.DataFrame(f).T)
+                if to_latex:
+                    print(pd.DataFrame(f).T.to_latex())
+                else:
+                    print(pd.DataFrame(f).T)
                 print("------------------------------------------------------------", end="\n\n")
 
     def _check_readiness(self):
@@ -380,7 +383,7 @@ class MultiScenarioExperiment(BaseExperiment):
 
         return outputs
 
-    def print_results(self):
+    def print_results(self, to_latex=False):
         """Print the results of the ANOVA and Tukey analysis to give a quick overview of the
         results."""
         if (self.anova_results is None) and (self.tukey_results is None):
@@ -404,12 +407,18 @@ class MultiScenarioExperiment(BaseExperiment):
                       end="\n\n")
                 print("Analysis of Variance (ANOVA)")
                 print("------------------------------------------------------------")
-                print(aov_table)
+                if to_latex:
+                    print(aov_table.to_latex())
+                else:
+                    print(aov_table)
                 print("------------------------------------------------------------", end="\n\n")
 
                 print("Tukey HSD post-hoc analysis: pairwise comparison of relevant groups")
                 print("------------------------------------------------------------")
-                print(self.tukey_results[measure])
+                if to_latex:
+                    print(self.tukey_results[measure].to_latex)
+                else:
+                    print(self.tukey_results[measure])
                 print("------------------------------------------------------------", end="\n\n")
 
 
@@ -714,7 +723,7 @@ class MultiFactorExperiment(BaseExperiment):
 
         return outputs
 
-    def print_results(self):
+    def print_results(self, to_latex=False):
         """Print the results of the ANOVA and Tukey analysis to give a quick overview of the
         results."""
         if (self.anova_results is None) and (self.tukey_results is None):
@@ -739,12 +748,18 @@ class MultiFactorExperiment(BaseExperiment):
                       end="\n\n")
                 print("Analysis of Variance (ANOVA)")
                 print("------------------------------------------------------------")
-                print(aov_table)
+                if to_latex:
+                    print(aov_table.to_latex())
+                else:
+                    print(aov_table)
                 print("------------------------------------------------------------", end="\n\n")
 
                 print("Tukey HSD post-hoc analysis: pairwise comparison of relevant groups")
                 print("------------------------------------------------------------")
-                print(self.tukey_results[measure])
+                if to_latex:
+                    print(self.tukey_results[measure].to_latex)
+                else:
+                    print(self.tukey_results[measure])
                 print("------------------------------------------------------------", end="\n\n")
 
     def _determine_sample_size(self):
