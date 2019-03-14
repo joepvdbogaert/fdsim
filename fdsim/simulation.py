@@ -104,6 +104,9 @@ class Simulator():
                    'Hoofdweg': 10,
                    'unknown': 10}
 
+    target_incident_types = ['Binnenbrand', 'OMS / automatische melding']
+    max_target = 15 * 60 # 15 minutes
+
     def __init__(self, incidents, deployments, stations, resource_allocation,
                  load_response_data=True, load_time_matrix=True, save_response_data=False,
                  save_time_matrix=False, vehicle_types=["TS", "RV", "HV", "WO"],
@@ -215,11 +218,11 @@ class Simulator():
         resource_allocation: pd.DataFrame,
             The resource allocation. Should at least contain the columns:
             ["TS_crew_ft", "TS_crew_pt", "RVHV_crew_ft",
-             "RVHV_crew_pt", "WO_crew_ft", "WO_crew_pt"]
+            "RVHV_crew_pt", "WO_crew_ft", "WO_crew_pt"]
  
         Returns
         -------
-        Stations: dict,
+        Stations: dict
             A dictionary like {'station name' -> fdsim.objects.FireStation object}.
         """
         rs = resource_allocation
@@ -314,15 +317,15 @@ class Simulator():
 
         Parameters
         ----------
-        t: float,
+        t: float
             Minutes since start of simulation, assuming the simulation started at
             some O'clock time.
-        hour_of_event: int,
+        hour_of_event: int
             The hour of day of the event to calculate the time to.
 
         Returns
         -------
-        time: float,
+        time: float
             The time in minutes from now (t) till the event.
         """
         minutes = t % 60
@@ -427,10 +430,12 @@ class Simulator():
 
     def _get_target(self, incident_type, object_function):
         """ Get the response time norm for a given incident. """
-        if incident_type in ['Binnenbrand', 'Buitenbrand']:
+        if prio != 1:
+            return np.nan
+        elif incident_type in self.target_incident_types:
             return self.target_dict[object_function] * 60
         else:
-            return 15 * 60
+            return self.max_target
 
     def simulate_single_incident(self):
         """ Simulate a random incident and its corresponding deployments.
@@ -447,7 +452,7 @@ class Simulator():
         dispatch = self.rsampler.sample_dispatch_time(type_)
 
         # get target response time
-        target = self._get_target(type_, func)
+        target = self._get_target(type_, func, prio)
 
         # sample rest of the response time and log everything
         for v in req_vehicles:
@@ -478,7 +483,7 @@ class Simulator():
         ----------
         N: int
             The number of incidents to simulate.
-        restart: boolean, optional
+        restart: boolean, optional, default: True
             Whether to empty the log and reset time before simulation (True)
             or to continue where stopped (False). Optional, defaults to True.
         """
@@ -498,7 +503,7 @@ class Simulator():
 
         Returns
         -------
-        results: pd.DataFrame,
+        results: pd.DataFrame
             The log of simulated incidents and deployments.
         """
         self.initialize_without_simulating()
@@ -514,15 +519,15 @@ class Simulator():
 
         Parameters
         ----------
-        start_time: Timestamp or str, opional (default: None)
+        start_time: Timestamp or str, opional, default: None
             The start time of the simulation. Must be somewhere in the interval with which
             the simulator is initialized. If None, uses the start time with which the Simulator
             is initialized.
-        end)time: Timestamp or str, opional (default: None)
+        end)time: Timestamp or str, opional, default: None
             The end time of the simulation. Must be somewhere in the interval with which
             the simulator is initialized. If None, uses the end time with which the Simulator
             is initialized.
-        n: int, optional (default: 1)
+        n: int, optional, default: 1
             The number of runs, i.e., how many times to simulate the period.
 
         Notes
@@ -644,7 +649,8 @@ class Simulator():
         Parameters
         ----------
         path: str, optional
-            Where to save the file.
+            Where to save the file. If None, saves it in self.data_dir with the name
+            'simulator.pickle'.
 
         Notes
         -----
@@ -685,9 +691,9 @@ class Simulator():
 
         Parameters
         ----------
-        station_name: str,
+        station_name: str
             The name of the station to change the vehicles for.
-        vehicle_type: str,
+        vehicle_type: str
             The type of vehicle to change the number of vehicles for.
         number: int
             The new number of vehicles of vehicle_type to assign to the station.
@@ -704,13 +710,13 @@ class Simulator():
 
         Parameters
         ----------
-        station_name: str,
+        station_name: str
             The name of the station to change the vehicles for.
-        vehicle_type: str,
+        vehicle_type: str
             The type of vehicle to change the number of vehicles for.
         number: int
             The new number of vehicles of vehicle_type to assign to the station.
-        appointment: str,
+        appointment: str
             One of ['ft', "pt"] for full time or part time crew respectively.
         """
         resource_allocation = self.resource_allocation.copy()
@@ -762,7 +768,7 @@ class Simulator():
             The identifier of the demand location to move the station to or
             the decimal longitude and latitude coordinates to move the station
             to.
-        keep_name: boolean, optional (default: True)
+        keep_name: boolean, optional, default: True
             Whether to keep the current name of the station or not.
         new_name: str, required if keep_name=False
             New name of the station. Ignored if keep_name=True.
@@ -789,11 +795,11 @@ class Simulator():
 
         Parameters
         ----------
-        station_name: str,
+        station_name: str
             The name of the new station.
-        location: str,
+        location: str
             The identifier of the demand location to put the new station in.
-        **resources: key-value pairs,
+        **resources: key-value pairs
             Resources to assign to the station. Keys must match the columns of
             'resource_allocation' and values must be integers.
         """
@@ -823,7 +829,7 @@ class Simulator():
 
         Parameters
         ----------
-        station_name: str,
+        station_name: str
             The name of the station to remove.
         """
         resource_allocation = self.resource_allocation.copy()
@@ -876,19 +882,19 @@ class Simulator():
 
         Parameters
         ----------
-        station_name: str,
+        station_name: str
             The name of the station to close.
-        start_hour: int,
+        start_hour: int
             The hour of the day from which the station is closed.
-        end_hour: int,
+        end_hour: int
             The hour of the day from which the station is open.
-        days_of_week: array-like, optional (default: [0, 1, 2, 3, 4, 5, 6]),
+        days_of_week: array-like, optional, default: [0, 1, 2, 3, 4, 5, 6]
             The days of the week for which the status adjustment applies in zero-based
             integers (i.e., Monday = 0, Tuesday = 1, ..., Sunday = 6).
-        status: str, one of ['closed', 'parttime'], optional (default: 'closed'),
+        status: str, one of ['closed', 'parttime'], optional, default: 'closed'
             Whether the station should be completely closed or operating as a part time
             station during the specified hours.
-        remove_previous: boolean, optional (default: False)
+        remove_previous: boolean, optional, default: False
             Whether to reset previously set any closing times.
 
         Notes
@@ -929,10 +935,10 @@ class Simulator():
 
         Parameters
         ----------
-        station_name: str,
+        station_name: str
             The name of the station for which to use the backup protocol in capitalized
             letters (e.g., "VICTOR", "AMSTELVEEN", ...).
-        vehicle_types: array-like of str or None, optional (default: None),
+        vehicle_types: array-like of str or None, optional, default: None
             The vehicle types for which to apply the backup protocol. Available types
             are ["TS", "HV", "RV", "WO"]. If None, applies it to all types.
         """
@@ -972,3 +978,31 @@ class Simulator():
         """Remove all backup protocols from all stations."""
         for station in self.stations.values():
             station.reset_backup_protocol()
+
+    def set_target_incident_types(self, types):
+        """Overwrite the default incident types for which object-dependent response
+        time targets are computed.
+
+        By default, the simulator does this for inside fires and automatic fire alarms:
+        ["Binnenbrand", "OMS / automatische melding"].
+
+        Parameters
+        ----------
+        types: array-like of strings
+            The incident types for which targets should be computed (if it is
+            a priority 1 incident).
+        """
+        self.target_incident_types = types
+
+    def set_max_target(self, target):
+        """Overwrite the default maximum response time target. The maximum target
+        is used for all incident types that are not in 'self.target_incident_types'.
+
+        By default, this value is set to 15 minutes.
+
+        Parameters
+        ----------
+        target: int
+            The new response time target in minutes.
+        """
+        self.max_target = target * 60  # save in seconds
