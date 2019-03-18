@@ -73,7 +73,7 @@ class Evaluator(object):
         self.confidence = confidence
         self.verbose = verbose
 
-    def add_metric(self, measure, name=None, description=None, mean=True, std=True,
+    def add_metric(self, measure, name=None, description=None, count=True, mean=True, std=True,
                    missing=True, quantiles=[0.5, 0.75, 0.90, 0.95, 0.98, 0.99],  prios=None,
                    locations=None, vehicles=None, incident_types=None, objects=None,
                    hours=None, days_of_week=None, first_only=False):
@@ -90,10 +90,10 @@ class Evaluator(object):
             A description of the set of evaluation metrics. This can be used to explain, e.g.,
             the applied filtering in a more elaborate way, whereas the 'name' property should
             be kept concise.
-        mean, std, missing: boolean, optional (default: True),
-            Whether to describe the measure by its mean, standard deviation and proportion of
-            missing (NaN) values. Note that a missing response time means the response was
-            carried out by an external vehicle.
+        count, mean, std, missing: boolean, optional, default: True,
+            Whether to describe the measure by its count, mean, standard deviation and
+            proportion of missing (NaN) values. Note that a missing response time means the
+            response was carried out by an external vehicle.
         quantiles: array(float), optional (default: [0.5, 0.75, 0.90, 0.95, 0.98, 0.99]),
             Which quantiles to describe the measure with. Set to None to not use any quantiles.
         prios: int or array-like of ints, optional (default: None),
@@ -123,7 +123,7 @@ class Evaluator(object):
         if locations is not None:
             locations = np.array(locations, dtype=str)
 
-        self.metric_sets[name] = {"mean": mean, "std": std, "missing": missing,
+        self.metric_sets[name] = {"count": count, "mean": mean, "std": std, "missing": missing,
                                   "quantiles": quantiles, "locations": locations,
                                   "prios": prios, "vehicles": vehicles,
                                   "incident_types": incident_types, "objects": objects,
@@ -200,6 +200,7 @@ class Evaluator(object):
         results_per_run = self._calculate_descriptors_by_run(
             data,
             y_col=y_col,
+            count=metric_set["count"],
             mean=metric_set["mean"],
             std=metric_set["std"],
             missing=metric_set["missing"],
@@ -214,7 +215,8 @@ class Evaluator(object):
         if col == self.hour_col:
             data[self.hour_col] = pd.to_datetime(data[self.datetime_col]).dt.hour
         if col == self.weekday_col:
-            data[self.weekday_col] = pd.to_datetime(data[self.datetime_col]).apply(lambda x: x.isoweekday())
+            data[self.weekday_col] = pd.to_datetime(data[self.datetime_col]).apply(
+                lambda x: x.isoweekday())
 
         if isinstance(values, (list, np.ndarray, pd.Series)):
             if len(values) > 1:
@@ -227,21 +229,26 @@ class Evaluator(object):
             data = data[data[col] == values].copy()
         return data
 
-    def _calculate_descriptors_by_run(self, data, y_col, mean=True, std=True, missing=True,
-                                      quantiles=None, measure_col="response_time"):
+    def _calculate_descriptors_by_run(self, data, y_col, count=True, mean=True, std=True,
+                                      missing=True, quantiles=None,
+                                      measure_col="response_time"):
         """Calculate requested metrics for each simulation run."""
         results = (data.groupby(self.run_col)[y_col]
-                       .apply(lambda x: self._calculate_descriptors(x, mean=mean, std=std,
-                                                                    missing=missing,
+                       .apply(lambda x: self._calculate_descriptors(x, count=count, mean=mean,
+                                                                    std=std, missing=missing,
                                                                     quantiles=quantiles)))
 
         return results.reset_index("run").reset_index(drop=True)
 
-    def _calculate_descriptors(self, x, mean=True, std=True, missing=True, quantiles=None):
+    def _calculate_descriptors(self, x, count=True, mean=True, std=True, missing=True,
+                               quantiles=None):
         """Calculate requested metrics over an array x."""
         length = len(x)
         x, n_missing = self._count_and_drop_nan(x)
         descriptors = {}
+
+        if count:
+            descriptors["count"] = length
 
         if missing:
             # descriptors["n_missing"] = n_missing
