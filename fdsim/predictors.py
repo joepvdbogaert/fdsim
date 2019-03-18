@@ -248,6 +248,9 @@ class BaseIncidentPredictor(object):
 
         return np.array(scores)
 
+    def set_custom_forecast(self, forecast):
+        self.forecast = forecast
+
 
 class ProphetIncidentPredictor(BaseIncidentPredictor):
     """ Class that forecasts incident rate for different incident types.
@@ -569,13 +572,7 @@ class BasicLambdaForecaster(BaseIncidentPredictor):
                 mask = ((df1[match_cols[0]] == df2[match_cols[0]].iloc[i]) &
                         (df1[match_cols[1]] == df2[match_cols[1]].iloc[i]) &
                         (df1[match_cols[2]] == df2[match_cols[2]].iloc[i]))
-                # print("sample mask: {}".format(mask[0:10]))
-                # print("sum mask: {}".format(np.sum(mask)))
-                # print("values to use from df2: ")
-                # print(df2[fill_cols].iloc[i, :].values)
                 df1.loc[mask, fill_cols] = df2[fill_cols].iloc[i, :].values
-                # print("new values in df1:")
-                # print(df1.loc[mask, fill_cols])
 
             return df1
 

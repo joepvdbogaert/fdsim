@@ -3,6 +3,8 @@ import numpy as np
 import pandas as pd
 import pickle
 
+from collections import defaultdict
+
 from fdsim.sampling import IncidentSampler, ResponseTimeSampler
 from fdsim.objects import Vehicle, FireStation
 from fdsim.dispatching import ShortestDurationDispatcher
@@ -41,6 +43,9 @@ class Simulator():
         Type of predictor to use. Defaults to 'prophet', which uses Facebook's
         Prophet package to forecast incident rate per incident type based on trend
         and yearly, weekly, and daily patterns.
+    max_target: int, optional, default: 18
+        The maximum response time target in minutes. This is used as the target
+        for priority 1 incidents that do not have a more strict norm (i.e., fires).
     start_time: Timestamp or str (convertible to timestamp), optional
         The start of the time period to simulate. If None, forecasts from
         the end of the data. Defaults to None.
@@ -75,42 +80,23 @@ class Simulator():
     >>> sim = quick_load_simulator('simulator.pickle')
     """
     # the target response times
-    target_dict = {'Bijeenkomstfunctie': 10,
-                   'Industriefunctie': 8,
-                   'Woonfunctie': 8,
-                   'Straat': 10,
-                   'Overige gebruiksfunctie': 10,
-                   'Kantoorfunctie': 10,
-                   'Logiesfunctie': 8,
-                   'Onderwijsfunctie': 8,
-                   'Grachtengordel': 10,
-                   'Overig': 10,
-                   'Winkelfunctie': 5,
-                   'Kanalen en rivieren': 10,
-                   'nan': 10,
-                   'Trein': 5,
-                   'Sportfunctie': 10,
-                   'Regionale weg': 10,
-                   'Celfunctie': 5,
-                   'Tram': 5,
-                   'Metro': 5,
-                   'Sloten en Vaarten': 10,
-                   'Gezondheidszorgfunctie': 8,
-                   'Lokale weg': 5,
-                   'Polders': 10,
-                   'Haven': 10,
-                   'Autosnelweg': 10,
-                   'Meren en plassen': 10,
-                   'Hoofdweg': 10,
-                   'unknown': 10}
-
     target_incident_types = ['Binnenbrand', 'OMS / automatische melding']
-    max_target = 15 * 60 # 15 minutes
+    target_dictionary = {'Bijeenkomstfunctie': 10,
+                         'Industriefunctie': 10,
+                         'Overige gebruiksfunctie': 10,
+                         'Woonfunctie': 8,
+                         'Kantoorfunctie': 10,
+                         'Logiesfunctie': 8,
+                         'Onderwijsfunctie': 8,
+                         'Winkelfunctie': 8,
+                         'Sportfunctie': 10,
+                         'Celfunctie': 5,
+                         'Gezondheidszorgfunctie': 8}
 
     def __init__(self, incidents, deployments, stations, resource_allocation,
                  load_response_data=True, load_time_matrix=True, save_response_data=False,
                  save_time_matrix=False, vehicle_types=["TS", "RV", "HV", "WO"],
-                 predictor="basic", start_time=None, end_time=None, data_dir="data",
+                 predictor="basic", max_target=18, start_time=None, end_time=None, data_dir="data",
                  osrm_host="http://192.168.56.101:5000", location_col="hub_vak_bk",
                  verbose=True):
 
@@ -162,6 +148,7 @@ class Simulator():
             self.end_time = self.isampler.sampling_dict[
                 np.max(list(self.isampler.sampling_dict.keys()))]["time"]
 
+        self.set_max_target(max_target)
         progress("Simulator is ready. At your service.", verbose=self.verbose)
 
     @staticmethod
@@ -428,17 +415,17 @@ class Simulator():
         self.isampler.reset_time()
         self.t = 0
 
-    def _get_target(self, incident_type, object_function):
-        """ Get the response time norm for a given incident. """
-        if prio != 1:
+    def _get_target(self, incident_type, object_function, priority):
+        """Get the response time norm for a given incident."""
+        if priority != 1:
             return np.nan
         elif incident_type in self.target_incident_types:
             return self.target_dict[object_function] * 60
         else:
-            return self.max_target
+            return self.max_target * 60
 
     def simulate_single_incident(self):
-        """ Simulate a random incident and its corresponding deployments.
+        """Simulate a random incident and its corresponding deployments.
 
         Requires the Simulator to be initialized with `initialize_without_simulating`.
         Simulates a single incidents and all deployments that correspond to it.
@@ -661,6 +648,7 @@ class Simulator():
         del self.rsampler.travel_time_noise_generators
         del self.rsampler.onscene_generators
         del self.isampler.incident_time_generator
+        del self.target_dict
 
         if path is None:
             path = os.path.join(self.data_dir, "simulator.pickle")
@@ -998,11 +986,27 @@ class Simulator():
         """Overwrite the default maximum response time target. The maximum target
         is used for all incident types that are not in 'self.target_incident_types'.
 
-        By default, this value is set to 15 minutes.
+        By default, this value is set to 18 minutes as defined by Dutch Law.
 
         Parameters
         ----------
         target: int
             The new response time target in minutes.
+        """ 
+        self.max_target = target
+        self.target_dict = defaultdict(lambda: self.max_target, self.target_dictionary)
+
+    def set_custom_forecast(self, forecast, start_time=None, end_time=None):
+        """Manually provide a forecast to use during simulation.
+
+        Parameters
+        ----------
+        forecast: pd.DataFrame
+            Must have the same shape and columns as the output of
+            `self.isampler.predictor.get_forecast()`. No assertions are made on this input.
+        start_time, end_time: datetime object or str or None, optional, default: None
+            The start and end time of the new sampling dictionary that will be created
+            from the provided forecast. If None, uses the entire forecast.
         """
-        self.max_target = target * 60  # save in seconds
+        self.isampler.set_custom_forecast(forecast, start_time=start_time, end_time=end_time)
+        progress("Forecast updated and sampling dictionary re-created.", verbose=self.verbose)

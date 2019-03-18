@@ -601,3 +601,19 @@ class IncidentSampler():
         loc, prio, veh, func = self._sample_incident_details(incident_type)
 
         return t, d["time"], incident_type, loc, prio, veh, func
+
+    def set_custom_forecast(self, forecast, start_time=None, end_time=None):
+        """Manually provide a forecast.
+
+        Parameters
+        ----------
+        forecast: pd.DataFrame
+            Must have the same shape and columns as the output of
+            `self.predictor.get_forecast()`. No assertions are made on this input.
+        start_time, end_time: datetime object or str or None, optional, default: None
+            The start and end time of the new sampling dictionary that will be created
+            from the provided forecast. If None, uses the entire forecast.
+        """
+        self.predictor.set_custom_forecast(forecast)
+        self._set_sampling_dict(start_time, end_time, incident_types=self.types)
+        self.incident_time_generator = self._incident_time_generator()
