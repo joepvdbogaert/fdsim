@@ -9,7 +9,7 @@ from abc import abstractmethod, ABCMeta
 import statsmodels.api as sm
 import statsmodels.formula.api as smf
 
-from fractions import gcd
+from math import gcd
 from functools import reduce
 
 from fdsim.helpers import progress, quick_load_simulator
@@ -570,7 +570,7 @@ class MultiFactorExperiment(BaseExperiment):
             simulator.simulate_period(n=self.scenario_runs)
             progress("Computing performance metrics.")
             results_dict[k] = self.evaluator.evaluate(simulator.results)
-            progress("Simulation of combination {} / {} completed.".format(k, self.n_scenarios))
+            progress("Simulation of combination {} / {} completed.".format(k + 1, self.n_scenarios))
 
         # for debugging
         self.results_dict = results_dict
@@ -660,7 +660,7 @@ class MultiFactorExperiment(BaseExperiment):
 
         elif self.factor_types[factor_name] == "location":
 
-            location = level_params.pop("location")
+            location = level_params.pop("new_location")
             simulator.move_station(station_name, location, **level_params)
 
         elif self.factor_types[factor_name] == "station_status":
@@ -693,11 +693,11 @@ class MultiFactorExperiment(BaseExperiment):
         had a significant impact based on the ANOVA results."""
         sig_var_dict = {}
         for measure, df in anova_results.items():
-                df2 = df.reset_index()
-                df2 = df2[(df2["significant"] == True) & (df2["factor"] != "Residual")]
-                tuples = df2.apply(lambda x: (x["factor"], x["metric"]), axis=1)
-                tuples = tuples.tolist()
-                sig_var_dict[measure] = tuples
+            df2 = df.reset_index()  
+            df2 = df2[(df2["significant"] == True) & (df2["factor"] != "Residual")]
+            tuples = df2.apply(lambda x: (x["factor"], x["metric"]), axis=1)
+            tuples = tuples.values.tolist()
+            sig_var_dict[measure] = tuples
 
         return sig_var_dict
 
