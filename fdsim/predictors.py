@@ -5,7 +5,6 @@ from abc import abstractmethod, ABCMeta
 import numpy as np
 import pandas as pd
 
-from fbprophet import Prophet
 from sklearn.model_selection import TimeSeriesSplit
 from sklearn.metrics import mean_squared_error, mean_absolute_error
 
@@ -284,7 +283,11 @@ class ProphetIncidentPredictor(BaseIncidentPredictor):
     __name__ = "ProphetIncidentPredictor"
 
     def __init__(self, **kwargs):
-
+        try:
+            from fbprophet import Prophet
+        except ImportError:
+            raise ImportError("the ProphetIncidentPredictor requires the fbprophet package."
+                              " Install with 'pip install fbprophet'.")
         self.fitted = False
         self.file_name = "prophet_forecast.csv"
         self.sampling_dict = None

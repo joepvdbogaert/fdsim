@@ -1,5 +1,4 @@
 import os
-import osrm
 import numpy as np
 import pandas as pd
 
@@ -80,13 +79,18 @@ class ShortestDurationDispatcher(BaseDispatcher):
         self.verbose = verbose
         self.path = os.path.join(data_dir, "time_matrix.csv")
 
-        osrm.RequestConfig.host = self.osrm_host
-        self.osrm_config = osrm.RequestConfig
-
         if load_matrix:
             self.time_matrix_df = self.load_time_matrix(self.path)
         else:
-            self.time_matrix_df = self._get_travel_durations()
+            try:
+                import osrm
+                osrm.RequestConfig.host = self.osrm_host
+                self.osrm_config = osrm.RequestConfig    
+                self.time_matrix_df = self._get_travel_durations()
+            except ImportError:
+                raise ImportError("If load_matrix=False, OSRM is required to calculate the "
+                                  "travel durations. Either use load_matrix=True or install"
+                                  " the osrm Python package.")
 
         self._prepare_dispatch_information()
 

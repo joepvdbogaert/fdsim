@@ -1,6 +1,5 @@
 import numpy as np
 import pandas as pd
-import osrm
 
 from scipy.stats import lognorm, gamma, bayes_mvs
 from sklearn import linear_model
@@ -100,7 +99,17 @@ def get_osrm_distance_and_duration(longlat_origin, longlat_destination,
     Returns
     -------
     Tuple of ('distance', 'duration') according to OSRM.
+
+    Notes
+    -----
+    Requires OSRM to be installed (an optional dependency of fdsim).
     """
+    try:
+        import osrm
+    except ImportError:
+        raise ImportError("Please install the OSRM Python package to calculate travel"
+                          "distances and durations.")
+
     osrm.RequestConfig.host = osrm_host
     result = osrm.simple_route(longlat_origin, longlat_destination,
                                output="route",
@@ -128,7 +137,17 @@ def add_osrm_distance_and_duration(df, osrm_host="http://192.168.56.101:5000"):
     -------
     The DataFrame with two added columns 'osrm_distance' (meters) and 'osrm_duration'
     (seconds).
+
+    Notes
+    -----
+    Requires OSRM to be installed (an optional dependency of fdsim).
     """
+    try:
+        import osrm
+    except ImportError:
+        raise ImportError("Please install the OSRM Python package to calculate travel"
+                          "distances and durations.")
+
     osrm.RequestConfig.host = osrm_host
     df[["osrm_distance", "osrm_duration"]] = \
         df.apply(lambda x: get_osrm_distance_and_duration(
