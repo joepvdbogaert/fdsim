@@ -1,9 +1,13 @@
-from pyproj import Proj, transform
 import pickle
 import time
 
 
 def lonlat_to_xy(lon, lat):
+    """Convert (longitude, latitude) coordinates to (x, y).
+
+    Requires `pyproj` to be installed.
+    """
+    from pyproj import Proj, transform
     inProj = Proj("+init=EPSG:4326")
     outProj = Proj("+init=EPSG:28992")
     x, y = transform(inProj, outProj, lon, lat)
@@ -11,6 +15,11 @@ def lonlat_to_xy(lon, lat):
 
 
 def xy_to_lonlat(x, y):
+    """Convert (x, y) coordinates to (longitude, latitude).
+
+    Requires `pyproj` to be installed.
+    """
+    from pyproj import Proj, transform
     outProj = Proj("+init=EPSG:4326")
     inProj = Proj("+init=EPSG:28992")
     lon, lat = transform(inProj, outProj, x, y)
