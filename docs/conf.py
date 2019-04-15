@@ -42,7 +42,8 @@ extensions = [
     'sphinx.ext.autodoc',
     'sphinx.ext.mathjax',
     'sphinx.ext.viewcode',
-    'sphinx.ext.napoleon'
+    'sphinx.ext.napoleon',
+    'm2r'
 ]
 
 # Add any paths that contain templates here, relative to this directory.
@@ -51,8 +52,12 @@ templates_path = ['_templates']
 # The suffix(es) of source filenames.
 # You can specify multiple suffix as a list of string:
 #
-# source_suffix = ['.rst', '.md']
-source_suffix = '.rst'
+source_suffix = ['.rst', '.md']
+# source_suffix = {
+#     '.rst': 'restructuredtext',
+#     '.txt': 'markdown',
+#     '.md': 'markdown'
+# }
 
 # The master toctree document.
 master_doc = 'index'
@@ -75,7 +80,7 @@ pygments_style = None
 # ADDED MANUALLY ---
 # exclude modules dependent on C-libraries by mocking imports
 autodoc_mock_imports = ["scipy", "numpy", "gdal", "pyproj", "pandas", "geopandas", "matplotlib",
-                        "sklearn", "pystan", "fbprophet"]
+                        "sklearn", "pystan", "fbprophet", "statsmodels", "seaborn"]
 
 from unittest.mock import MagicMock
 
@@ -85,7 +90,7 @@ class Mock(MagicMock):
         return MagicMock()
 
 MOCK_MODULES = ["scipy", "numpy", "gdal", "pyproj", "pandas", "geopandas", "matplotlib",
-                "sklearn", "pystan", "fbprophet"]
+                "sklearn", "pystan", "fbprophet", "seaborn"]
 sys.modules.update((mod_name, Mock()) for mod_name in MOCK_MODULES)
 # --- END ADDED PARTS
 

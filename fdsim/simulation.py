@@ -1,3 +1,7 @@
+"""The :code:`simulation` module is home to the core class in fdsim: the :code:`Simulator`.
+The :code:`Simulator` is the main interface for setting up simulation runs and experiments
+and takes care of employing other classes and modules when necessary.
+"""
 import os
 import numpy as np
 import pandas as pd
@@ -65,19 +69,32 @@ class Simulator():
 
     Examples
     --------
-    >>> from fdsim.simulation import Simulator
-    >>> sim = Simulator(incidents, deployments, stations, resource_allocation)
-    >>> sim.simulate_n_incidents(10000)
-    >>> sim.save_log("simulation_results.csv")
-    >>>
-    >>> # Continue simulating where you left of:
-    >>> sim.simulate_n_incidents(10000, restart=False)
-    >>>
-    >>> # You can save the simulor object after initializing, so that next time you can
-    >>> # skip the initialization (requires the pickle module):
-    >>> sim.save_simulator_object()
-    >>> from fdsim.helpers import quick_load_simulator
-    >>> sim = quick_load_simulator('simulator.pickle')
+    The :code:`Simulator` class takes four datasets as inputs. One with historic incidents,
+    one with historic deployments, one with station locations, and one with the resources
+    available at each station. After providing this information, a simulation is performed
+    in just a single line of code.
+
+    .. code::
+
+        >>> from fdsim.simulation import Simulator
+        >>> sim = Simulator(incidents, deployments, stations, resource_allocation)
+        >>> sim.simulate_n_incidents(10000)
+        >>> # save the simulated incidents and deployments
+        >>> sim.save_log("simulation_results.csv")
+
+    .. code:: 
+
+        >>> # Continue simulating where you left of:
+        >>> sim.simulate_n_incidents(10000, restart=False)
+
+    You can save the simulor object after initializing, so that next time you can
+    skip the initialization.
+
+    .. code::
+        
+        >>> sim.save_simulator_object()
+        >>> from fdsim.helpers import quick_load_simulator
+        >>> sim = quick_load_simulator('simulator.pickle')
     """
     # the target response times
     target_incident_types = ['Binnenbrand', 'OMS / automatische melding']
@@ -202,7 +219,7 @@ class Simulator():
 
         Parameters
         ----------
-        resource_allocation: pd.DataFrame,
+        resource_allocation: pd.DataFrame
             The resource allocation. Should at least contain the columns:
             ["TS_crew_ft", "TS_crew_pt", "RVHV_crew_ft",
             "RVHV_crew_pt", "WO_crew_ft", "WO_crew_pt"]
@@ -327,6 +344,8 @@ class Simulator():
         t: float
             The time since the start of the simulation. Determines which vehicles
             have become available again and can return to their bases.
+        time: datetime object
+            The current date and time.
         """
         # return vehicles from deployments
         for vehicle in self.vehicles.values():
@@ -470,7 +489,7 @@ class Simulator():
         ----------
         N: int
             The number of incidents to simulate.
-        restart: boolean, optional, default: True
+        restart: boolean, optional, default=True
             Whether to empty the log and reset time before simulation (True)
             or to continue where stopped (False). Optional, defaults to True.
         """
@@ -506,15 +525,15 @@ class Simulator():
 
         Parameters
         ----------
-        start_time: Timestamp or str, opional, default: None
+        start_time: Timestamp or str, opional, default=None
             The start time of the simulation. Must be somewhere in the interval with which
             the simulator is initialized. If None, uses the start time with which the Simulator
             is initialized.
-        end)time: Timestamp or str, opional, default: None
+        end)time: Timestamp or str, opional, default=None
             The end time of the simulation. Must be somewhere in the interval with which
             the simulator is initialized. If None, uses the end time with which the Simulator
             is initialized.
-        n: int, optional, default: 1
+        n: int, optional, default=1
             The number of runs, i.e., how many times to simulate the period.
 
         Notes
@@ -613,15 +632,15 @@ class Simulator():
     def save_log(self, file_name="simulation_results.csv"):
         """ Save the current log file to disk.
 
-        Notes
-        -----
-        File gets saved in the folder 'data_dir' that is specified on
-        initialization of the Simulator.
-
         Parameters
         ----------
         file_name: str, optional
             How to name the csv of the log. Default: 'simulation_results.csv'.
+
+        Notes
+        -----
+        File gets saved in the folder 'data_dir' that is specified on
+        initialization of the Simulator.
         """
         self.results.to_csv(os.path.join(self.data_dir, file_name), index=False)
 
@@ -635,9 +654,9 @@ class Simulator():
 
         Parameters
         ----------
-        path: str, optional
+        path: str, optional, default=None
             Where to save the file. If None, saves it in self.data_dir with the name
-            'simulator.pickle'.
+            `simulator.pickle`.
 
         Notes
         -----
@@ -756,7 +775,7 @@ class Simulator():
             The identifier of the demand location to move the station to or
             the decimal longitude and latitude coordinates to move the station
             to.
-        keep_name: boolean, optional, default: True
+        keep_name: boolean, optional, default=True
             Whether to keep the current name of the station or not.
         new_name: str, required if keep_name=False
             New name of the station. Ignored if keep_name=True.
@@ -834,6 +853,14 @@ class Simulator():
         self.set_resource_allocation(self.original_resource_allocation)
 
     def set_start_time(self, start_time):
+        """Set the start date and time of the simulation period.
+
+        Parameters
+        ----------
+        start_time: str or datetime object
+            The new start time of the simulation. If providing a string, please make sure
+            it is in a non-ambiguous format, such as "YYYY-MM-DD HH:mm:ss".
+        """
         self.start_time = pd.to_datetime(start_time)
         self._update_period()
 
@@ -842,17 +869,33 @@ class Simulator():
         self.isampler.incident_time_generator = self.isampler._incident_time_generator()
 
     def set_end_time(self, end_time):
+        """Set the end date and time of the simulation period.
+
+        Parameters
+        ----------
+        end_time: str or datetime object
+            The new end time of the simulation. If providing a string, please make sure
+            it is in a non-ambiguous format, such as "YYYY-MM-DD HH:mm:ss".
+        """
         self.end_time = pd.to_datetime(end_time)
         self._update_period()
 
     def reset_simulation_period(self):
+        """Reset the start and end dates and times of the simulation period to the full range
+        of the forecast."""
         self.isampler._set_sampling_dict(None, None)
         self.isampler.incident_time_generator = self.isampler._incident_time_generator()
         self.start_time = self.isampler.sampling_dict[0]["time"]
         self.end_time = self.isampler.sampling_dict[self.isampler.T - 1]["time"]
 
     def set_simulation_period(self, start_time, end_time):
-        """ Change the start and end times of the simulation period. """
+        """ Change the start and end times of the simulation period.
+
+        Parameters
+        ----------
+        start_time, end_time: str or datetime object
+            The new start and end times of the simulation. If providing a string, please make
+            sure it is in a non-ambiguous format, such as "YYYY-MM-DD HH:mm:ss"."""
         if start_time is not None:
             self.start_time = pd.to_datetime(start_time)
         if end_time is not None:
@@ -876,13 +919,13 @@ class Simulator():
             The hour of the day from which the station is closed.
         end_hour: int
             The hour of the day from which the station is open.
-        days_of_week: array-like, optional, default: [0, 1, 2, 3, 4, 5, 6]
+        days_of_week: array-like, optional, default=[0, 1, 2, 3, 4, 5, 6]
             The days of the week for which the status adjustment applies in zero-based
             integers (i.e., Monday = 0, Tuesday = 1, ..., Sunday = 6).
-        status: str, one of ['closed', 'parttime'], optional, default: 'closed'
+        status: str, one of ['closed', 'parttime'], optional, default='closed'
             Whether the station should be completely closed or operating as a part time
             station during the specified hours.
-        remove_previous: boolean, optional, default: False
+        remove_previous: boolean, optional, default=False
             Whether to reset previously set any closing times.
 
         Notes

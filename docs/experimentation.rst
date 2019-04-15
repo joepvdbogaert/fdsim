@@ -1,0 +1,5 @@
+Experimentation
+===============
+
+.. automodule:: experiments
+    :members:
