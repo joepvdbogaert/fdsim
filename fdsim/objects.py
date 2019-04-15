@@ -29,6 +29,7 @@ class Vehicle():
         self.last_station_coords = self.base_coords
         self.coords = coords
         self.becomes_available = 0
+        self.current_crew = None
 
     def assign_base_station(self, station):
         """ Assign a FireStation object to the Vehicle as a base station. """
