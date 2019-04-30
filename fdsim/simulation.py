@@ -475,9 +475,8 @@ class Simulator():
                     type_, loc, vehicle.current_station_name, vehicle.type, vehicle.current_crew,
                     prio, estimated_time=estimated_time)
 
-                vehicle.dispatch(dest, self.t + (onscene/60) + (estimated_time/60))
-
                 response = dispatch + turnout + travel
+                vehicle.dispatch(dest, self.t + (response + onscene + estimated_time) / 60)
                 self._log([self.t, time, type_, loc, prio, func, vehicle.type, vehicle.id,
                            dispatch, turnout, travel, onscene, response, target,
                            vehicle.current_station_name, vehicle.base_station_name, vehicle.current_crew])
