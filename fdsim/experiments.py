@@ -284,7 +284,9 @@ class ABTest(BaseExperiment):
     def analyze(self, results_A, results_B, to_minutes=True, with_std=True):
         """Analyze the output of the evaluator on the two simulation logs."""
         def seconds_to_minutes(*args):
-            return ["{:02.0f}:{:02.0f}".format(x // 60, x % 60) for x in args]
+            return ["{}{:02.0f}:{:02.0f}"
+                    .format("-" if x < 0 else "", abs(x) // 60, abs(x) % 60)
+                    for x in args]
 
         def round(value, measure, descriptor):
             if (measure == "on_time") and (descriptor != "count"):
