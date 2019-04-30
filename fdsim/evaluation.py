@@ -370,7 +370,7 @@ class Evaluator(object):
 
         tail_end_0 = np.max([np.quantile(data[y_col], q=0.998) for data in filtered_datasets])
         tail_start_1 = np.min([np.quantile(data[y_col], q=0.95) for data in filtered_datasets])
-        tail_end_1 = np.min([np.quantile(data[y_col], q=0.999) for data in filtered_datasets])
+        tail_end_1 = np.max([np.quantile(data[y_col], q=0.999) for data in filtered_datasets])
         
         # plot
         fig, axes = plt.subplots(1, 2, figsize=(12, 6))
