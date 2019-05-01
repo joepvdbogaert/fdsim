@@ -608,10 +608,14 @@ def fit_onscene_times(data, vehicles=["TS", "HV", "RV", "WO"], rough_lower_bound
     # filter vehicles
     data = data[np.in1d(data["voertuig_groep"], vehicles)].copy()
 
+    # set arrival time of NaN values to the start of incident (conservative alternative)
+    nan_arrival = data["inzet_terplaatse_datumtijd"].isnull()
+    data.loc[nan_arrival, "inzet_terplaatse_datumtijd"] = data.loc[nan_arrival, "inzet_start_inzet_datumtijd"].copy()
+
     # calculate on-scene times
     data["inzet_duration"] = \
         (pd.to_datetime(data["inzet_eind_inzet_datumtijd"], dayfirst=True) -
-         pd.to_datetime(data["inzet_start_inzet_datumtijd"], dayfirst=True)).dt.seconds
+         pd.to_datetime(data["inzet_terplaatse_datumtijd"], dayfirst=True)).dt.seconds
 
     # filter out unrealistically small and large values
     data = data[(data["inzet_duration"] > rough_lower_bound) &
