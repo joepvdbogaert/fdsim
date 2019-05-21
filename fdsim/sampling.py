@@ -437,7 +437,7 @@ class IncidentSampler():
         self._create_incident_types()
         self._create_demand_locations()
 
-        self.incident_time_generator = self._incident_time_generator()
+        self.reset_time()
 
         progress("IncidentSampler ready for simulation.", verbose=self.verbose)
 
@@ -477,6 +477,8 @@ class IncidentSampler():
         self.sampling_dict = self.predictor.create_sampling_dict(start_time, end_time,
                                                                  incident_types)
         self.T = len(self.sampling_dict)
+        self.start_time = self.sampling_dict[0]["time"]
+        self.end_time = self.sampling_dict[self.T - 1]["time"]
         self.lambdas = np.array([d['lambda'] for d in self.sampling_dict.values()])
 
     def _assign_predictor(self, predictor, fc_dir):
@@ -536,7 +538,7 @@ class IncidentSampler():
         self.locations = {l: DemandLocation(l, building_probs[l])
                           for l in building_probs.keys()}
 
-    def _incident_time_generator(self, period_length=60):
+    def _incident_time_generator(self, period_length=60, start_period=0):
         """ Returns a generator object for incident times. """
 
         counter = 0
@@ -549,8 +551,10 @@ class IncidentSampler():
             n_arrivals = np.random.poisson(self.lambdas, size=len(self.lambdas))
             total_arrivals = np.sum(n_arrivals)
 
+            n_arrivals = np.append(n_arrivals[start_period:], n_arrivals[:start_period])
             periods = np.array([x for x in chain.from_iterable(
-                                [[i]*n_arrivals[i] for i in range(len(n_arrivals))])],
+                                [[i]*n for i, n in enumerate(n_arrivals)])
+                               ],
                                dtype=int)
 
             minutes = np.random.uniform(0, period_length, size=total_arrivals)
@@ -564,7 +568,26 @@ class IncidentSampler():
 
     def reset_time(self):
         """ Reset the incident time generator to start from t=0. """
+        self.gen_start_period = 0
         self.incident_time_generator = self._incident_time_generator()
+
+    def set_time(self, time):
+        """Set time so that incidents are sampled from this point forward.
+
+        After setting time, `sample_next_incident` will sample the next incident in the
+        hour(s) after the set time rather than starting at the start of the forecast /
+        sampling dict or resuming from its current position.
+
+        Parameters
+        ----------
+        time: pd.Timestamp or datetime64
+            The time from which to sample the next incident.
+        """
+        # set the hours = periods since the start of the sampling dictionary
+        self.gen_start_period = int((time - self.start_time).total_seconds() // 3600)
+        # reset the incident time generator starting at the given period
+        self.incident_time_generator = self._incident_time_generator(
+                                        start_period=self.gen_start_period)
 
     def _sample_incident_details(self, incident_type):
         """ Draw random sample of incident characteristics.
@@ -600,7 +623,7 @@ class IncidentSampler():
         (t, incident_type, location, priority, vehicles, building function)
         """
         t = next(self.incident_time_generator)
-        d = self.sampling_dict[int((t//60) % self.T)]
+        d = self.sampling_dict[int((t//60 + self.gen_start_period) % self.T)]
         incident_type = np.random.choice(a=self.types, p=d["type_distribution"])
         loc, prio, veh, func = self._sample_incident_details(incident_type)
 
@@ -640,17 +663,20 @@ class BigIncidentSampler():
     vehicles: str or list of strings
         The vehicle types to take into account.
     types: list of strings
-        The incident types to use. If none, use all in the data.
+        The incident types to use. If None, use all in the data.
     """
-    def __init__(self, incidents, deployments, min_ts=3, vehicles=["TS"],
+    def __init__(self, incidents, deployments, start_time, end_time, min_ts=3, vehicles=["TS"],
                  types=["Binnenbrand", "Buitenbrand", "Hulpverlening algemeen"]):
 
-        incidents["dim_incident_start_datumtijd"] = pd.to_datetime(incidents["dim_incident_start_datumtijd"], dayfirst=True)
-        incidents["dim_incident_eind_datumtijd"] = pd.to_datetime(incidents["dim_incident_eind_datumtijd"], dayfirst=True)
+        incidents["dim_incident_start_datumtijd"] = \
+                pd.to_datetime(incidents["dim_incident_start_datumtijd"], dayfirst=True)
+        incidents["dim_incident_eind_datumtijd"] = \
+                pd.to_datetime(incidents["dim_incident_eind_datumtijd"], dayfirst=True)
 
         # filter to only big incidents of relevant type and vehicles
-        big_incidents, big_deployments = get_big_incident_data(incidents, deployments, min_ts=min_ts,
-                                                                         types=types, vehicles=vehicles)
+        big_incidents, big_deployments = get_big_incident_data(incidents, deployments,
+                                                               min_ts=min_ts, types=types,
+                                                               vehicles=vehicles)
 
         # get distributions over time
         self.time_distributions = get_big_incident_arrival_dist(big_incidents)
@@ -669,15 +695,24 @@ class BigIncidentSampler():
         # create generator object
         self._create_big_incident_generator()
 
-    def _create_big_incident_types(self, big_incidents, big_deployments, types=["Binnenbrand", "Buitenbrand"], vehicles=["TS"]):
+        # find combinations of month and day for sampling
+        self.start_time = start_time
+        self.end_time = end_time
+        self._set_month_day_combinations(start_time, end_time)
+
+    def _create_big_incident_types(self, big_incidents, big_deployments,
+                                   types=["Binnenbrand", "Buitenbrand"], vehicles=["TS"]):
         """Create IncidentType instances for big incidents specifically."""
         # get vehicle requirement probabilities
-        vehicle_probs = get_vehicle_requirements_probabilities(big_incidents, big_deployments, vehicles)
+        vehicle_probs = get_vehicle_requirements_probabilities(big_incidents, big_deployments,
+                                                               vehicles)
 
         # location distribution
         location_probs = get_spatial_distribution_per_type(big_incidents)
 
-        self.big_incident_types = {t: IncidentType([1.0, 0.0, 0.0], vehicle_probs[t], location_probs[t]) for t in types}
+        self.big_incident_types = {
+            t: IncidentType([1., 0., 0.], vehicle_probs[t], location_probs[t]) for t in types
+        }
 
     def _create_big_incident_generator(self):
         """Create a generator object for fast simulation of big incidents."""
@@ -709,9 +744,43 @@ class BigIncidentSampler():
             self.type_distribution
         )
 
+    def _set_month_day_combinations(self, start_time, end_time):
+        """Find dates that satisfy combinations of a given month and day of the week in
+        a given range.
+        """
+        date_range = pd.date_range(start=start_time, end=end_time)
+
+        self.month_day_combos = {}
+        for month in range(1, 13):
+
+            self.month_day_combos[month] = {}
+            for day in range(7):
+                self.month_day_combos[month][day] = [
+                    date for date in date_range if
+                    (date.month == month) and (date.weekday() == day)
+                ]
+
+    def _sample_timestamp(self, month, day, hour):
+        """Sample a random timestamp that satisfies a given month, weekday, and hour.
+
+        Parameters
+        ----------
+        month, day, hour: int
+            Number of the month, weekday, and hour of day respectively. Note that month
+            is 1-indexed, while weekday and hour are 0-indexed.
+
+        Returns
+        -------
+        timestamp: pd.Timestamp object
+            The random timestamp.
+        """
+        return np.random.choice(self.month_day_combos[month][day]) + \
+                    pd.Timedelta(value=hour, unit="h")
+
     def sample_big_incident(self):
         """Sample a big incident at some random time and place."""
         month, day, hour, incident_type, duration = next(self.incident_generator)
+        time = self._sample_timestamp(month, day, hour)
         vehicles = self.big_incident_types[incident_type].sample_vehicles()
         location = self.big_incident_types[incident_type].sample_location()
-        return month, day, hour, incident_type, location, vehicles, duration
+        return time, incident_type, location, 1, vehicles, duration
