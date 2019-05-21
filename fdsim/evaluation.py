@@ -235,18 +235,29 @@ class Evaluator(object):
 
         # calculate metrics
         progress("Calculating requested metrics.", verbose=self.verbose)
-        results_per_run = self._calculate_descriptors_by_run(
-            data,
-            y_col=y_col,
-            count=metric_set["count"],
-            mean=metric_set["mean"],
-            std=metric_set["std"],
-            missing=metric_set["missing"],
-            quantiles=metric_set["quantiles"]
-        )
+        if self.by_run:
+            results_per_run = self._calculate_descriptors_by_run(
+                data,
+                y_col=y_col,
+                count=metric_set["count"],
+                mean=metric_set["mean"],
+                std=metric_set["std"],
+                missing=metric_set["missing"],
+                quantiles=metric_set["quantiles"]
+            )
 
-        results_per_run.drop(self.run_col, axis=1, inplace=True)
-        return results_per_run
+            results_per_run.drop(self.run_col, axis=1, inplace=True)
+            return results_per_run
+        else:
+            results = self._calculate_descriptors(
+                data[y_col],
+                count=metric_set["count"],
+                mean=metric_set["mean"],
+                std=metric_set["std"],
+                missing=metric_set["missing"],
+                quantiles=metric_set["quantiles"]
+            )
+            return results
 
     def _filter_data(self, data, col, values):
         """Filter data while dealing with input variations."""
