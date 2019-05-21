@@ -698,3 +698,29 @@ def get_coordinates_locations_stations(data, location_col="hub_vak_bk"):
                       .to_dict())
 
     return location_coords, station_coords
+
+
+def fit_big_incident_duration(big_incidents):
+    """Fit a Gamma random variable on the duration of big incidents.
+
+    Parameters
+    ----------
+    big_incidents: pd.DataFrame
+        The incident data, filtered to only big incidents / output of
+        `fdsim.incidentfitting.get_big_incident_data`.
+
+    Returns
+    -------
+    duration_rv: scipy.stats.gamma frozen distribution
+        A random variable describing the distribution of big incident durations.
+    """
+    big_incidents["duration"] = (pd.to_datetime(big_incidents["dim_incident_eind_datumtijd"], dayfirst=True)
+                                 - pd.to_datetime(big_incidents["dim_incident_start_datumtijd"], dayfirst=True)
+                                ).dt.seconds / 60
+
+    big_incidents = big_incidents[~big_incidents["duration"].isnull()]
+
+    rv = fit_gamma_rv(big_incidents["duration"],
+                      floc=np.min(big_incidents["duration"]) - 1,
+                      scale=100)
+    return rv

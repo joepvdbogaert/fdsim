@@ -84,6 +84,8 @@ def get_vehicle_requirements_probabilities(incidents, deployments, vehicles):
         The log of incidetns to extract probabilities from.
     deployments: pd.DataFrame,
         The log of deployments to extract probabilities from.
+    vehicles: list
+        The vehicle types to take into account.
 
     Returns
     -------
@@ -185,3 +187,146 @@ def get_building_function_probabilities(incidents, location_col="hub_vak_bk"):
         .to_dict()
 
     return building_dict
+
+
+def get_big_incident_type_dist(big_incidents, types=None):
+    """Get the distribution of big incidents over incident types.
+
+    Parameters
+    ----------
+    big_incidents: pd.DataFrame
+        The incident data, filtered to only big incidents / output of `get_big_incident_data`.
+    types: list of strings, default=None
+        The incident types to use. If None, use all.
+    """
+    # count incidents for each type
+    by_type = (big_incidents.groupby("dim_incident_incident_type")["dim_incident_id"]
+                            .count()
+                            .reset_index()
+                            .rename(columns={"dim_incident_id": "number of incidents", "dim_incident_incident_type": "incident type"}))
+    # sort descendingly
+    by_type = by_type.sort_values("number of incidents", ascending=False)
+    # get the distribution
+    by_type["probability"] = by_type["number of incidents"] / by_type["number of incidents"].sum()
+    # filter types
+    if types is not None:
+        by_type = by_type[np.in1d(by_type["incident type"], types)]
+
+    return {"types": by_type["incident type"].values,
+            "probabilities": by_type["probability"].values}
+
+
+def get_big_incident_arrival_dist(big_incidents):
+    """Get distributions of big incidents over months, days of the week, and hours.
+
+    Parameters
+    ----------
+    big_incidents: pd.DataFrame
+        The incident data, filtered to only big incidents / output of `get_big_incident_data`.
+    """
+    def groupby_count(data, groupby, count_col="dim_incident_id", rename="number of incidents"):
+        return data.groupby(groupby)[count_col].count().reset_index().rename(columns={count_col: rename})
+
+    # add time attributes
+    big_incidents["hour"] = big_incidents["dim_incident_start_datumtijd"].dt.hour
+    big_incidents["weekday"] = big_incidents["dim_incident_start_datumtijd"].dt.weekday
+    big_incidents["month"] = big_incidents["dim_incident_start_datumtijd"].dt.month
+
+    # count
+    by_hour = groupby_count(big_incidents, "hour")
+    by_day = groupby_count(big_incidents, "weekday")
+    by_month = groupby_count(big_incidents, "month")
+
+    # get distributions
+    by_hour["probability"] = by_hour["number of incidents"] / by_hour["number of incidents"].sum()
+    by_day["probability"] = by_day["number of incidents"] / by_day["number of incidents"].sum()
+    by_month["probability"] = by_month["number of incidents"] / by_month["number of incidents"].sum()
+
+    return {"hour": by_hour["probability"].values,
+            "day": by_day["probability"].values,
+            "month": by_month["probability"].values}
+
+
+def get_big_incident_ids(deployments, min_ts=3):
+    """Find incidents that are have at least a specified number of TS deployments.
+
+    Parameters
+    ----------
+    deployments: pd.DataFrame
+        The deployment data.
+    min_ts: int, default=3
+        The minimum number of TS deployments for an incident to be classified as big.
+
+    Returns
+    -------
+    ids: list
+        A list of incident IDs that had at least min_ts TS deployments.
+    """
+    deployments = deployments[deployments["voertuig_groep"] == "TS"]
+    num_ts = deployments.groupby("hub_incident_id").size()
+    return num_ts[num_ts >= min_ts].index.tolist()
+
+
+def infer_types(data):
+    """Infer incident types from an incident log.
+
+    Parameters
+    ----------
+    data: pd.DataFrame
+        The incident data. Must contain the 'dim_incident_incident_type' column.
+
+    Returns
+    -------
+    types: list of strings
+        The incident types found in the data.
+
+    Notes
+    -----
+    Excludes 'NVT' and 'nan' from the resulting list.
+    """
+    types = [t for t in incidents["dim_incident_incident_type"].unique() if t not in ["NVT", "nan"]]
+    return types
+
+
+def get_big_incident_data(incidents, deployments, types=None, vehicles=["TS"], min_ts=3):
+    """Filter incident and deployment data to those instances relating to a 'big' incident.
+
+    Parameters
+    ----------
+    incidents: pd.DataFrame
+        The incident data.
+    deployments: pd.DataFrame
+        The deployment data.
+    types: list of strings, default=None
+        The incident types to include, if None, use all in the data.
+    vehicles: list of strings, default=["TS"]
+        The vehicle types to take into account. Deployments of all other vehicle types
+        will be dropped.
+    min_ts: int, default=3
+        The minimum number of TS deployments for an incident to be included in the result.
+
+    Returns
+    -------
+    big_incidents, big_deployments: pd.DataFrame
+        The filtered incident and deployment data (as a tuple).
+    """
+    # some basic preparations
+    incidents = prepare_incidents_for_spatial_analysis(incidents.copy())
+    
+    # filter incident types
+    if types is None:
+        types = infer_types(incidents)
+
+    incidents = incidents[np.in1d(incidents["dim_incident_incident_type"], types)]
+
+    # filter vehicle types
+    if isinstance(vehicles, str):
+        deployments = deployments[deployments["voertuig_groep"] == vehicles].copy()
+    else:
+        deployments = deployments[np.in1d(deployments["voertuig_groep"], vehicles)]
+
+    # filter big incidents
+    big_ids = get_big_incident_ids(deployments, min_ts=min_ts)
+    big_incidents = incidents.set_index("dim_incident_id").loc[big_ids, :].reset_index()
+    big_deployments = deployments[np.in1d(deployments["hub_incident_id"], big_ids)]
+    return big_incidents, big_deployments

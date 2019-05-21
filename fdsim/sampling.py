@@ -9,7 +9,10 @@ from fdsim.incidentfitting import (
     get_prio_probabilities_per_type,
     get_vehicle_requirements_probabilities,
     get_spatial_distribution_per_type,
-    get_building_function_probabilities
+    get_building_function_probabilities,
+    get_big_incident_data,
+    get_big_incident_arrival_dist,
+    get_big_incident_type_dist,
 )
 
 from fdsim.predictors import ProphetIncidentPredictor, BasicLambdaForecaster
@@ -22,7 +25,8 @@ from fdsim.responsetimefitting import (
     model_travel_time_per_vehicle,
     fit_dispatch_times,
     fit_turnout_times,
-    fit_onscene_times
+    fit_onscene_times,
+    fit_big_incident_duration
 )
 
 from fdsim.objects import DemandLocation, IncidentType
@@ -256,7 +260,7 @@ class ResponseTimeSampler():
         by using generators that call the function once every 10,000 samples.
 
         This function creates dictionaries of the same architecture as the dictionaries
-        holding the random variables, but intead of random variables, it stores generators
+        holding the random variables, but instead of random variables, it stores generators
         as lowest level elements.
 
         Example
@@ -617,3 +621,97 @@ class IncidentSampler():
         self.predictor.set_custom_forecast(forecast)
         self._set_sampling_dict(start_time, end_time, incident_types=self.types)
         self.incident_time_generator = self._incident_time_generator()
+
+
+class BigIncidentSampler():
+    """Class that simulates big incidents at random times. Mostly useful as a starting
+    point for simulating more (regular) incidents and evaluating response times in
+    extreme cases.
+
+    Parameters
+    ----------
+    incidents: pd.DataFrame
+        The incident data.
+    deployments: pd.DataFrame
+        The deployment data
+    min_ts: int, default=3
+        The minimum number of TS deployments for an incident to be considered 'big'. Only
+        such incidents will be sampled.
+    vehicles: str or list of strings
+        The vehicle types to take into account.
+    types: list of strings
+        The incident types to use. If none, use all in the data.
+    """
+    def __init__(self, incidents, deployments, min_ts=3, vehicles=["TS"],
+                 types=["Binnenbrand", "Buitenbrand", "Hulpverlening algemeen"]):
+
+        incidents["dim_incident_start_datumtijd"] = pd.to_datetime(incidents["dim_incident_start_datumtijd"], dayfirst=True)
+        incidents["dim_incident_eind_datumtijd"] = pd.to_datetime(incidents["dim_incident_eind_datumtijd"], dayfirst=True)
+
+        # filter to only big incidents of relevant type and vehicles
+        big_incidents, big_deployments = get_big_incident_data(incidents, deployments, min_ts=min_ts,
+                                                                         types=types, vehicles=vehicles)
+
+        # get distributions over time
+        self.time_distributions = get_big_incident_arrival_dist(big_incidents)
+
+        # get distribution over incident types
+        self.type_distribution = get_big_incident_type_dist(big_incidents)
+
+        # get duration random variable
+        self.duration_rv = fit_big_incident_duration(big_incidents)
+
+        # get big incident types (with location and vehicle distributions)
+        self._create_big_incident_types(
+            big_incidents, big_deployments, types=types, vehicles=vehicles
+        )
+
+        # create generator object
+        self._create_big_incident_generator()
+
+    def _create_big_incident_types(self, big_incidents, big_deployments, types=["Binnenbrand", "Buitenbrand"], vehicles=["TS"]):
+        """Create IncidentType instances for big incidents specifically."""
+        # get vehicle requirement probabilities
+        vehicle_probs = get_vehicle_requirements_probabilities(big_incidents, big_deployments, vehicles)
+
+        # location distribution
+        location_probs = get_spatial_distribution_per_type(big_incidents)
+
+        self.big_incident_types = {t: IncidentType([1.0, 0.0, 0.0], vehicle_probs[t], location_probs[t]) for t in types}
+
+    def _create_big_incident_generator(self):
+        """Create a generator object for fast simulation of big incidents."""
+        def big_incident_generator(month_probs, day_probs, hour_probs, duration_rv, type_probs):
+            months = np.random.choice(a=12, size=10000, p=month_probs)
+            days = np.random.choice(a=7, size=10000, p=day_probs)
+            hours = np.random.choice(a=24, size=10000, p=hour_probs)
+            types = np.random.choice(a=type_probs["types"], size=10000, p=type_probs["probabilities"])
+            durations = duration_rv.rvs(10000)
+
+            counter = 0
+            while True:
+                try:
+                    yield months[counter], days[counter], hours[counter], types[counter], durations[counter]
+                    counter += 1
+                except IndexError:
+                    counter = 0
+                    months = np.random.choice(a=12, size=10000, p=month_probs)
+                    days = np.random.choice(a=7, size=10000, p=day_probs)
+                    hours = np.random.choice(a=24, size=10000, p=hour_probs)
+                    types = np.random.choice(a=type_probs["types"], size=10000, p=type_probs["probabilities"])
+                    durations = duration_rv.rvs(10000)
+
+        self.incident_generator = big_incident_generator(
+            self.time_distributions["month"],
+            self.time_distributions["day"],
+            self.time_distributions["hour"],
+            self.duration_rv,
+            self.type_distribution
+        )
+
+    def sample_big_incident(self):
+        """Sample a big incident at some random time and place."""
+        month, day, hour, incident_type, duration = next(self.incident_generator)
+        vehicles = self.big_incident_types[incident_type].sample_vehicles()
+        location = self.big_incident_types[incident_type].sample_location()
+        return month, day, hour, incident_type, location, vehicles, duration
