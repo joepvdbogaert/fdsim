@@ -9,7 +9,7 @@ import pickle
 
 from collections import defaultdict
 
-from fdsim.sampling import IncidentSampler, ResponseTimeSampler
+from fdsim.sampling import IncidentSampler, ResponseTimeSampler, BigIncidentSampler
 from fdsim.objects import Vehicle, FireStation
 from fdsim.dispatching import ShortestDurationDispatcher
 from fdsim.helpers import progress
@@ -114,7 +114,8 @@ class Simulator():
                  load_response_data=True, load_time_matrix=True, save_response_data=False,
                  save_time_matrix=False, vehicle_types=["TS", "RV", "HV", "WO"],
                  predictor="basic", max_target=18, start_time=None, end_time=None, data_dir="data",
-                 osrm_host="http://192.168.56.101:5000", location_col="hub_vak_bk",
+                 osrm_host="http://192.168.56.101:5000", location_col="hub_vak_bk", big_vehicles=["TS"],
+                 big_min_ts=3, big_types=["Binnenbrand", "Buitenbrand", "Hulpverlening algemeen"],
                  verbose=True):
 
         self.stations_with_backups = []
@@ -164,6 +165,10 @@ class Simulator():
         else:
             self.end_time = self.isampler.sampling_dict[
                 np.max(list(self.isampler.sampling_dict.keys()))]["time"]
+
+        self.big_sampler = BigIncidentSampler(incidents, deployments, self.start_time,
+                                              self.end_time, min_ts=big_min_ts,
+                                              vehicles=big_vehicles, types=big_types)
 
         self.set_max_target(max_target)
         progress("Simulator is ready. At your service.", verbose=self.verbose)
@@ -666,6 +671,7 @@ class Simulator():
         del self.rsampler.travel_time_noise_generators
         del self.rsampler.onscene_generators
         del self.isampler.incident_time_generator
+        del self.big_sampler.incident_generator
         del self.target_dict
 
         if path is None:
@@ -673,6 +679,7 @@ class Simulator():
 
         pickle.dump(self, open(path, "wb"))
         self.rsampler._create_response_time_generators()
+        self.big_sampler._create_big_incident_generator()
         self.isampler.reset_time()
 
     def set_resource_allocation(self, resource_allocation):
@@ -1052,3 +1059,51 @@ class Simulator():
         """
         self.isampler.set_custom_forecast(forecast, start_time=start_time, end_time=end_time)
         progress("Forecast updated and sampling dictionary re-created.", verbose=self.verbose)
+
+    def simulate_big_incident(self):
+        """Simulate a big incident at a random time in a random place. This method is mostly
+        useful to create a low-coverage starting point for further simulation.
+
+        This method resets simulation logs and simulation time. The moment of the incident is
+        considered t=0 and all vehicles are available at the time of the incident.
+        """
+        # reset log and time
+        self.initialize_without_simulating()
+
+        # sample big incident
+        time, type_, loc, prio, req_vehicles, duration = \
+                self.big_sampler.sample_big_incident()
+        # set time of incident sampler accordingly
+        self.isampler.set_time(time)
+
+        # sample object function from regular incident sampler
+        func = self.isampler.locations[loc].sample_building_function(type_)
+        dest = self.rsampler.location_coords[loc]
+
+        # sample dispatch time
+        dispatch = self.rsampler.sample_dispatch_time(type_)
+
+        # get target response time
+        target = self._get_target(type_, func, prio)
+
+        # sample rest of the response time and log everything
+        for v in req_vehicles:
+
+            vehicle, estimated_time = self._pick_vehicle(loc, v)
+            if vehicle is None:
+                turnout, travel, onscene, response = [np.nan]*4
+                self._log([self.t, time, type_, loc, prio, func, v, "EXTERNAL", dispatch,
+                           turnout, travel, onscene, response, target, "EXTERNAL", "EXTERNAL", "EXTERNAL"])
+            else:
+                vehicle.assign_crew()
+
+                turnout, travel, _ = self.rsampler.sample_response_time(
+                    type_, loc, vehicle.current_station_name, vehicle.type, vehicle.current_crew,
+                    prio, estimated_time=estimated_time)
+
+                response = dispatch + turnout + travel
+                onscene = duration * 60 - response  # duration is in minutes
+                vehicle.dispatch(dest, self.t + (response + onscene + estimated_time) / 60)
+                self._log([self.t, time, type_, loc, prio, func, vehicle.type, vehicle.id,
+                           dispatch, turnout, travel, onscene, response, target,
+                           vehicle.current_station_name, vehicle.base_station_name, vehicle.current_crew])

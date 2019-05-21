@@ -56,6 +56,7 @@ def quick_load_simulator(path="data/simulator.pickle"):
     sim = pickle.load(open(path, "rb"))
     sim.rsampler._create_response_time_generators()
     sim.isampler.reset_time()
+    sim.big_sampler._create_big_incident_generator()
     sim.set_max_target(sim.max_target)
     return sim
 
