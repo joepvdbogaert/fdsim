@@ -473,7 +473,8 @@ class BasicLambdaForecaster(BaseIncidentPredictor):
     def __init__(self, ignore_dates=None, id_col="dim_incident_id",
                  type_col="dim_incident_incident_type", date_col="dim_datum_datum",
                  month_col="dim_datum_maand_nr", month_day_col="dim_datum_maand_dag_nr",
-                 day_name_col="dim_datum_dag_naam_nl", hour_col="dim_tijd_uur", **kwargs):
+                 day_name_col="dim_datum_dag_naam_nl", hour_col="dim_tijd_uur",
+                 file_name="basic_lambda_forecast.csv", **kwargs):
 
         # store names of columns for use in multiple methods.
         self.id_col = id_col
@@ -500,7 +501,7 @@ class BasicLambdaForecaster(BaseIncidentPredictor):
         self.lambdas = None
         self.fitted = False
         self.day_col = "weekday_number"
-        self.file_name = "basic_lambda_forecast.csv"
+        self.file_name = file_name
 
         super().__init__(**kwargs)
 
