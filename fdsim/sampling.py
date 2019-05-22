@@ -726,7 +726,7 @@ class BigIncidentSampler():
             counter = 0
             while True:
                 try:
-                    yield months[counter], days[counter], hours[counter], types[counter], durations[counter]
+                    yield months[counter] + 1, days[counter], hours[counter], types[counter], durations[counter]
                     counter += 1
                 except IndexError:
                     counter = 0
