@@ -550,7 +550,7 @@ class Simulator():
         """
         if (start_time is not None) or (end_time is not None):
             self.set_simulation_period(start_time, end_time)
-            print("Simulation period changed to {} till {}."
+            progress("Simulation period changed to {} till {}."
                   .format(self.start_time, self.end_time))
 
         # continue with higher run number if we don't restart
@@ -1060,12 +1060,18 @@ class Simulator():
         self.isampler.set_custom_forecast(forecast, start_time=start_time, end_time=end_time)
         progress("Forecast updated and sampling dictionary re-created.", verbose=self.verbose)
 
-    def simulate_big_incident(self):
+    def simulate_big_incident(self, forced_num_ts=None):
         """Simulate a big incident at a random time in a random place. This method is mostly
         useful to create a low-coverage starting point for further simulation.
 
         This method resets simulation logs and simulation time. The moment of the incident is
         considered t=0 and all vehicles are available at the time of the incident.
+
+        Parameters
+        ----------
+        forced_num_ts: int, default=None
+            A number of TS responses to force to the incident. Useful to manipulate the
+            available vehicles to a specific number.
         """
         # reset log and time
         self.initialize_without_simulating()
@@ -1073,6 +1079,10 @@ class Simulator():
         # sample big incident
         time, type_, loc, prio, req_vehicles, duration = \
                 self.big_sampler.sample_big_incident()
+
+        if forced_num_ts is not None:
+            req_vehicles = ["TS"] * forced_num_ts
+
         # set time of incident sampler accordingly
         self.isampler.set_time(time)
 
