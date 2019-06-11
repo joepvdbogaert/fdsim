@@ -320,6 +320,36 @@ class Simulator():
 
         return vehicle, estimated_time
 
+    def _fast_pick_vehicle(self, location, vehicle_type):
+        """Choose a vehicle to dispatch to the given location without checking for crew
+        availability.
+
+        This is faster than `self._pick_vehicle()`, but is only correct if
+        every vehicle has its own full time crew.
+
+        Parameters
+        ----------
+        location: str
+            The ID of the demand location where a vehicle should be dispatched to.
+        vehicle_type: str
+            The type of vehicle to send to the incident.
+
+        Returns
+        -------
+        The Vehicle object of the chosen vehicle and the estimated travel time to
+        the incident / demand location in seconds.
+        """
+        candidates = [v for v in self.vehicles.values() if (v.type == vehicle_type) and v.available]
+
+        vehicle_id, estimated_time = self.dispatcher.dispatch(location, candidates)
+
+        if vehicle_id == "EXTERNAL":
+            return None, None
+
+        vehicle = self.vehicles[vehicle_id]
+
+        return vehicle, estimated_time
+
     @staticmethod
     def _calc_minutes_till_event(t, hour_of_day, hour_of_event):
         """ Calculate the number of minutes till a certain hour of day.
@@ -375,9 +405,50 @@ class Simulator():
         for station_name in self.stations_with_backups:
             self.stations[station_name].update_backups()
 
-    def _return_vehicle_to_station(self, vehicle_id, to_base=True, station=None):
-        """ Send a vehicle back to the station. """
-        pass
+    def _fast_update_vehicles(self, t, time):
+        """Return vehicles that finished their jobs to their base stations and make them
+        available again. In contrast to `self._update_vehicles`, this method ignores the
+        availability and returning of crews completely. So no crews are returned to stations
+        and station statuses are not updated. It simply returns the vehicle and sets it to
+        available.
+
+        Parameters
+        ----------
+        t: float
+            The time since the start of the simulation. Determines which vehicles
+            have become available again and can return to their bases.
+        time: datetime object
+            The current date and time.
+        """
+        # return vehicles from deployments
+        for vehicle in self.vehicles.values():
+            if (not vehicle.available) and (vehicle.becomes_available <= t):
+                vehicle.available = True
+                vehicle.coords = vehicle.last_station_coords
+
+        # send relocated vehicles back home if original vehicle is available
+        for vehicle in self.vehicles.values():
+            # available and at other station: see if it should go home now
+            if (vehicle.available) and not (vehicle.is_at_base()):
+                base_vs = self.stations[vehicle.current_station_name].base_vehicle_dict[vehicle.type]
+                # send vehicles back to base recursively
+                if sum([self.vehicles[v].available_at_base() for v in base_vs]) > 0:
+                    self._fast_recursive_vehicle_to_base(vehicle.id)
+
+    def _fast_recursive_vehicle_to_base(self, vehicle_id):
+        """Like `self.send_vehicle_to_base_recursively`, but ignores crews."""
+        vehicle = self.vehicles[vehicle_id]
+        vehicle.current_station_name = vehicle.base_station_name
+        vehicle.coords = vehicle.base_coords
+
+        # find other vehicles at station that can return to base
+        relocated_vehicles = [v for v in self.vehicles.values() if
+                              (v.current_station_name == vehicle.base_station_name) and
+                              (v.type == vehicle.type) and
+                              (not v.is_at_base())]
+
+        for v in relocated_vehicles:
+            self._fast_recursive_vehicle_to_base(v.id)
 
     def _send_vehicle_to_base_recursively(self, vehicle_id):
         """ Send a vehicle to it's base and send interim vehicles that may have relocated
@@ -393,11 +464,11 @@ class Simulator():
                               (not v.is_at_base())]
 
         for v in relocated_vehicles:
-            v.return_to_base()
+            self._send_vehicles_to_base_recursively(v.id)
 
     def relocate_vehicle(self, vehicle_type, origin, destination):
         """ Relocate a vehicle form one station to another. The vehicle must be available and
-            will remain available, but just from a different location.
+        will remain available, but just from a different location.
 
         Parameters
         ----------
@@ -414,6 +485,37 @@ class Simulator():
                    (v.current_station_name == origin) and (v.type == vehicle_type)]
         try:
             options[0].relocate(destination, new_coords)
+        except IndexError:
+            raise ValueError("There is no vehicle available at station {} of type {}."
+                             " List of options (should be empty): {}"
+                             .format(origin, vehicle_type, options))
+
+    def fast_relocate_vehicle(self, vehicle_type, origin, destination):
+        """Relocate a vehicle form one station to another. The vehicle must be available and
+        will remain available, but just from a different location.
+
+        In contrast to the `relocate_vehicle` method, this method completely ignores the
+        availability of crews and does not udpate the crews either. This makes it faster,
+        but means it is only correct when every vehicle has its own dedicated full time crew.
+
+        Parameters
+        ----------
+        vehicle_type: str, one of ['TS', 'RV', 'HV', 'WO']
+            The type of vehicle that should be relocated.
+        origin: str
+            The name of the station from which a vehicle should be moved.
+        destination: str
+            The name of the station the vehicle should be moved to.
+        """
+        new_coords = self._get_station_coordinates(destination)
+        # select vehicle
+        options = [v for v in self.vehicles.values() if v.available and
+                   (v.current_station_name == origin) and (v.type == vehicle_type)]
+        
+        # relocate without looking at crew availability
+        try:
+            options[0].current_station_name = destination
+            options[0].coords = new_coords
         except IndexError:
             raise ValueError("There is no vehicle available at station {} of type {}."
                              " List of options (should be empty): {}"
@@ -1074,7 +1176,15 @@ class Simulator():
             available vehicles to a specific number.
         """
         # reset log and time
-        self.initialize_without_simulating()
+        # self.initialize_without_simulating()
+        # self._initialize_log(N)
+
+        # self.vehicles = self._create_vehicles(self.resource_allocation)
+        for v in self.vehicles.values():
+            if not v.available_at_base():
+                v.return_to_base()
+
+        self.t = 0
 
         # sample big incident
         time, type_, loc, prio, req_vehicles, duration = \
@@ -1084,7 +1194,7 @@ class Simulator():
             req_vehicles = ["TS"] * forced_num_ts
 
         # set time of incident sampler accordingly
-        self.isampler.set_time(time)
+        self.isampler.set_time(time, num_periods=96)
 
         # sample object function from regular incident sampler
         func = self.isampler.locations[loc].sample_building_function(type_)
@@ -1096,14 +1206,24 @@ class Simulator():
         # get target response time
         target = self._get_target(type_, func, prio)
 
+        # save info for reference (no logging in this method)
+        self.major_incident_info = {
+            "time": time,
+            "loc": loc,
+            "duration": duration,
+            "type": type_,
+            "req_vehicles": req_vehicles,
+            "target": target
+        }
+
         # sample rest of the response time and log everything
         for v in req_vehicles:
 
             vehicle, estimated_time = self._pick_vehicle(loc, v)
+
             if vehicle is None:
                 turnout, travel, onscene, response = [np.nan]*4
-                self._log([self.t, time, type_, loc, prio, func, v, "EXTERNAL", dispatch,
-                           turnout, travel, onscene, response, target, "EXTERNAL", "EXTERNAL", "EXTERNAL"])
+
             else:
                 vehicle.assign_crew()
 
@@ -1114,6 +1234,71 @@ class Simulator():
                 response = dispatch + turnout + travel
                 onscene = duration * 60 - response  # duration is in minutes
                 vehicle.dispatch(dest, self.t + (response + onscene + estimated_time) / 60)
-                self._log([self.t, time, type_, loc, prio, func, vehicle.type, vehicle.id,
-                           dispatch, turnout, travel, onscene, response, target,
-                           vehicle.current_station_name, vehicle.base_station_name, vehicle.current_crew])
+
+    def fast_simulate_big_incident(self, forced_num_ts=None):
+        """Simulate a big incident at a random time in a random place. This method is mostly
+        useful to create a low-coverage starting point for further simulation.
+
+        This method differs from `self.simulate_big_incident` in that it completely ignores
+        the availability of crews. Essentially it assumes that every vehicles has its own
+        dedicated full time crew.
+
+        Parameters
+        ----------
+        forced_num_ts: int, default=None
+            A number of TS responses to force to the incident. Useful to manipulate the
+            available vehicles to a specific number.
+        """
+        # make all vehicles available at their base station
+        for v in self.vehicles.values():
+            v.current_station_name = v.base_station_name
+            v.coords = v.base_coords
+            v.available = True
+
+        # reset the time
+        self.t = 0
+
+        # sample big incident
+        time, type_, loc, prio, req_vehicles, duration = \
+                self.big_sampler.sample_big_incident()
+
+        if forced_num_ts is not None:
+            req_vehicles = ["TS"] * forced_num_ts
+
+        # set time of incident sampler accordingly
+        self.isampler.set_time(time, num_periods=96)
+
+        # sample object function from regular incident sampler
+        func = self.isampler.locations[loc].sample_building_function(type_)
+        dest = self.rsampler.location_coords[loc]
+
+        # sample dispatch time
+        dispatch = self.rsampler.sample_dispatch_time(type_)
+
+        # get target response time
+        target = self._get_target(type_, func, prio)
+
+        # save info for reference (no logging in this method)
+        self.major_incident_info = {
+            "time": time,
+            "loc": loc,
+            "duration": duration,
+            "type": type_,
+            "req_vehicles": req_vehicles,
+            "target": target
+        }
+
+        # sample rest of the response time and log everything
+        for v in req_vehicles:
+
+            vehicle, estimated_time = self._fast_pick_vehicle(loc, v)
+
+            if vehicle is None:
+                turnout, travel, onscene, response = [np.nan]*4
+
+            else:
+                turnout = next(self.rsampler.turnout_generators["fulltime"][prio][vehicle.type])
+                travel = self.rsampler.sample_travel_time(estimated_time, vehicle.type)
+                response = dispatch + turnout + travel
+                onscene = duration * 60 - response  # duration is in minutes
+                vehicle.dispatch(dest, self.t + (response + onscene + estimated_time) / 60)
