@@ -122,6 +122,10 @@ class ShortestDurationDispatcher(BaseDispatcher):
         self.n_original_stations = np.sum(pd.Series(self.matrix_names).str[0:2] != "13")
         self.time_matrix_stations = self.time_matrix[-self.n_original_stations:, :]
         self.station_names = self.matrix_names[-self.n_original_stations:]
+        self._create_station_name_to_index_map()
+
+    def _create_station_name_to_index_map(self):
+        self.station_to_idx = {name: idx for idx, name in enumerate(self.station_names)}
 
     def set_custom_stations(self, station_locations, station_names):
         """ Set custom station locations.
@@ -143,6 +147,7 @@ class ShortestDurationDispatcher(BaseDispatcher):
         loc_indexes = [np.nonzero(self.matrix_names == loc)[0][0] for loc in station_locations]
         self.time_matrix_stations = self.time_matrix[loc_indexes, :]
         self.station_names = np.array(station_names, dtype=str)
+        self._create_station_name_to_index_map()
 
     def move_station(self, station_name, new_location, new_name):
         """ Move the location of a single station.
@@ -163,6 +168,7 @@ class ShortestDurationDispatcher(BaseDispatcher):
             station_index = np.nonzero(self.station_names == station_name)
             self.time_matrix_stations[station_index, :] = self.time_matrix[location_index, :]
             self.station_names[station_index] = new_name
+            self._create_station_name_to_index_map()
         elif isinstance(new_location, tuple):
             raise NotImplementedError("Setting location by coordinates not implemented yet.")
         else:
@@ -186,6 +192,7 @@ class ShortestDurationDispatcher(BaseDispatcher):
             distances = np.array([self.time_matrix[location_index, :]])
             self.time_matrix_stations = np.append(self.time_matrix_stations, distances, axis=0)
             self.station_names = np.append(self.station_names, station_name)
+            self._create_station_name_to_index_map()
         elif isinstance(location, tuple):
             raise NotImplementedError("Setting location by coordinates not implemented yet.")
         else:
@@ -203,8 +210,8 @@ class ShortestDurationDispatcher(BaseDispatcher):
 
         Parameters
         ----------
-        destination_coords: tuple(float, float)
-            The coordinates of the incident to dispatch to in decimal long lat.
+        destination_loc: str
+            The ID of the demand location to dispatch to.
         candidate_vehicles: array-like of Vehicle objects
             Vehicle objects with their current state and locations.
 
@@ -214,15 +221,15 @@ class ShortestDurationDispatcher(BaseDispatcher):
         """
         if len(candidate_vehicles) > 0:
             # save IDs and locations as lists
-            vehicle_ids = np.array([v.id for v in candidate_vehicles], dtype=str)
-            vehicle_locs = np.array([v.current_station_name for v in candidate_vehicles], dtype=str)
+            vehicle_ids = [v.id for v in candidate_vehicles]
+            vehicle_locs = [v.current_station_name for v in candidate_vehicles]
             # create subset of time_matrix corresponding to available vehicles
-            mask = np.in1d(self.station_names, vehicle_locs)
-            dest_idx = np.nonzero(self.matrix_names == destination_loc)[0][0]
+            mask = [self.station_to_idx[x] for x in vehicle_locs]
+            dest_idx = np.flatnonzero(self.matrix_names == destination_loc)[0]
+
             options = self.time_matrix_stations[mask, dest_idx]
+            best_position = options.argmin()
             # choose closest station and corresponding vehicle ID
-            best_station = self.station_names[mask][options.argmin()]
-            best_vehicle_id = vehicle_ids[np.nonzero(vehicle_locs == best_station)][0]
-            return best_vehicle_id, options.min()
+            return vehicle_ids[best_position], options[best_position]
         else:
             return "EXTERNAL", None
