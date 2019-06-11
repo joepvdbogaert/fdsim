@@ -43,10 +43,7 @@ class Vehicle():
         a crew with it, so it is available if it is not already in deployment (i.e., when it
         is relocated).
         """
-        if self.available_at_base():
-            return np.sum(self.base_station.get_crews(self.type)) > 0
-        else:
-            return self.available
+        return sum(self.base_station.get_crews(self.type)) > 0 if self.available_at_base() else self.available
 
     def assign_crew(self):
         if self.is_at_base():
