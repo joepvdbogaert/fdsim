@@ -538,7 +538,7 @@ class IncidentSampler():
         self.locations = {l: DemandLocation(l, building_probs[l])
                           for l in building_probs.keys()}
 
-    def _incident_time_generator(self, period_length=60, start_period=0):
+    def _incident_time_generator(self, period_length=60, start_period=0, num_periods=None):
         """ Returns a generator object for incident times. """
 
         counter = 0
@@ -552,12 +552,15 @@ class IncidentSampler():
             total_arrivals = np.sum(n_arrivals)
 
             n_arrivals = np.append(n_arrivals[start_period:], n_arrivals[:start_period])
+            if num_periods is not None:
+                n_arrivals = n_arrivals[:num_periods]
+
             periods = np.array([x for x in chain.from_iterable(
                                 [[i]*n for i, n in enumerate(n_arrivals)])
                                ],
                                dtype=int)
 
-            minutes = np.random.uniform(0, period_length, size=total_arrivals)
+            minutes = np.random.uniform(0, period_length, size=np.sum(n_arrivals))
             times = np.sort(periods * period_length + minutes)
 
             # yield times one by one
@@ -571,7 +574,7 @@ class IncidentSampler():
         self.gen_start_period = 0
         self.incident_time_generator = self._incident_time_generator()
 
-    def set_time(self, time):
+    def set_time(self, time, num_periods=None):
         """Set time so that incidents are sampled from this point forward.
 
         After setting time, `sample_next_incident` will sample the next incident in the
@@ -582,12 +585,18 @@ class IncidentSampler():
         ----------
         time: pd.Timestamp or datetime64
             The time from which to sample the next incident.
+        num_periods: int, default=100
+            The number of periods to simulate from the set time. Incident times will start
+            from time again after num_periods are simulated. This can be used when only short
+            periods need to be considered to speed up calculations, e.g., when simulating
+            major incidents and investigating only simultaneous incidents.
         """
         # set the hours = periods since the start of the sampling dictionary
         self.gen_start_period = int((time - self.start_time).total_seconds() // 3600)
         # reset the incident time generator starting at the given period
         self.incident_time_generator = self._incident_time_generator(
-                                        start_period=self.gen_start_period)
+                                        start_period=self.gen_start_period,
+                                        num_periods=num_periods)
 
     def _sample_incident_details(self, incident_type):
         """ Draw random sample of incident characteristics.
