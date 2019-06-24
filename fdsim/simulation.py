@@ -521,6 +521,24 @@ class Simulator():
                              " List of options (should be empty): {}"
                              .format(origin, vehicle_type, options))
 
+    def get_relocation_time(self, origin, destination):
+        """Get the travel time between two stations (useful for relocations).
+
+        This is a convenience method that links the input directly to
+        `self.dispatcher.get_relocation_time()`.
+
+        Parameters
+        ----------
+        origin, destination: str
+            The names of the stations.
+
+        Returns
+        -------
+        time: float
+            The travel time betweent the two stations in seconds.
+        """
+        return self.dispatcher.get_relocation_time(origin, destination)
+
     def _prepare_results(self):
         """ Create pd.DataFrame with descriptive column names of logged results."""
         self.results = pd.DataFrame(self.log[0:self.log_index, :], columns=self.log_columns,

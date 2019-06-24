@@ -121,8 +121,25 @@ class ShortestDurationDispatcher(BaseDispatcher):
         self.time_matrix = np.array(self.time_matrix_df.values, dtype=np.float)
         self.n_original_stations = np.sum(pd.Series(self.matrix_names).str[0:2] != "13")
         self.time_matrix_stations = self.time_matrix[-self.n_original_stations:, :]
+        self.station_to_station_matrix = self.time_matrix[-self.n_original_stations:, -self.n_original_stations:]
         self.station_names = self.matrix_names[-self.n_original_stations:]
         self._create_station_name_to_index_map()
+
+    def get_relocation_time(self, origin, destination):
+        """Get the travel time between two stations (useful for relocations).
+
+        Parameters
+        ----------
+        origin, destination: str
+            The names of the stations.
+
+        Returns
+        -------
+        time: float
+            The travel time betweent the two stations in seconds.
+        """
+        return self.station_to_station_matrix[self.station_to_idx[origin],
+                                              self.station_to_idx[destination]]
 
     def _create_station_name_to_index_map(self):
         self.station_to_idx = {name: idx for idx, name in enumerate(self.station_names)}
