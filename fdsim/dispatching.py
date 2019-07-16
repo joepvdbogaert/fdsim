@@ -83,6 +83,7 @@ class ShortestDurationDispatcher(BaseDispatcher):
             self.time_matrix_df = self.load_time_matrix(self.path)
         else:
             try:
+                global osrm
                 import osrm
                 osrm.RequestConfig.host = self.osrm_host
                 self.osrm_config = osrm.RequestConfig    
