@@ -1194,15 +1194,7 @@ class Simulator():
             available vehicles to a specific number.
         """
         # reset log and time
-        # self.initialize_without_simulating()
-        # self._initialize_log(N)
-
-        # self.vehicles = self._create_vehicles(self.resource_allocation)
-        for v in self.vehicles.values():
-            if not v.available_at_base():
-                v.return_to_base()
-
-        self.t = 0
+        self.initialize_without_simulating()
 
         # sample big incident
         time, type_, loc, prio, req_vehicles, duration = \
@@ -1224,16 +1216,6 @@ class Simulator():
         # get target response time
         target = self._get_target(type_, func, prio)
 
-        # save info for reference (no logging in this method)
-        self.major_incident_info = {
-            "time": time,
-            "loc": loc,
-            "duration": duration,
-            "type": type_,
-            "req_vehicles": req_vehicles,
-            "target": target
-        }
-
         # sample rest of the response time and log everything
         for v in req_vehicles:
 
@@ -1241,6 +1223,8 @@ class Simulator():
 
             if vehicle is None:
                 turnout, travel, onscene, response = [np.nan]*4
+                self._log([self.t, time, type_, loc, prio, func, v, "EXTERNAL", dispatch,
+                           turnout, travel, onscene, response, target, "EXTERNAL", "EXTERNAL", "EXTERNAL"])
 
             else:
                 vehicle.assign_crew()
@@ -1252,6 +1236,10 @@ class Simulator():
                 response = dispatch + turnout + travel
                 onscene = duration * 60 - response  # duration is in minutes
                 vehicle.dispatch(dest, self.t + (response + onscene + estimated_time) / 60)
+                self._log([self.t, time, type_, loc, prio, func, vehicle.type, vehicle.id,
+                           dispatch, turnout, travel, onscene, response, target,
+                           vehicle.current_station_name, vehicle.base_station_name, vehicle.current_crew])
+
 
     def fast_simulate_big_incident(self, forced_num_ts=None):
         """Simulate a big incident at a random time in a random place. This method is mostly
@@ -1259,7 +1247,8 @@ class Simulator():
 
         This method differs from `self.simulate_big_incident` in that it completely ignores
         the availability of crews. Essentially it assumes that every vehicles has its own
-        dedicated full time crew.
+        dedicated full time crew. It also does not initialize a simulation log, but stores
+        the major incident information in a dictionary `self.major_incident_info`.
 
         Parameters
         ----------
