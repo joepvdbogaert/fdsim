@@ -654,6 +654,65 @@ class IncidentSampler():
         self._set_sampling_dict(start_time, end_time, incident_types=self.types)
         self.incident_time_generator = self._incident_time_generator()
 
+    def set_location_probs(self, loc, equal_to=None, value_dict=None, types=None):
+        """Set the probability that incident of certain type occurs in a given location.
+
+        The probabilities are first set to the given values, then they are normalized again
+        to form a proper probability distribution. Note that this function should normally
+        not be called directly. Use fdsim.simulation.Simulator.set_location_incident_rates
+        instead.
+
+        Parameters
+        ----------
+        loc: str
+            The location to set the probabilities for.
+        equal_to: str or list(str)
+            The location from which to copy the probabilities. ignored if value_dict is provided.
+        value_dict: dict
+            Dictionary specifying the incident types to change and the specific probability to
+            set them to like {'type' -> prob}.
+        types: list(str)
+            The incident types to change the probabilities of. If None, uses all. Ignored if a
+            value_dict is provided.
+
+        Returns
+        -------
+        sum_probs: dict
+            The sum of the probabilities for each incident type. Can be used to adjust the overall
+            incident rates per type so that the incident rate in other locations is not changed.
+        """
+        # create value_dict if not provided
+        if value_dict is None:
+            if equal_to is None:
+                raise ValueError("Either equal_to or value_dict must be provided")
+            if types is None:
+                types = list(self.incident_types.keys())
+            if isinstance(equal_to, str):
+                equal_to = [equal_to]
+            if isinstance(types, str):
+                types = [types]
+
+            # initialize at zero, add for every loc in equal_to
+            value_dict = {typ: 0.0 for typ in types}
+
+            for typ in types:
+                for l in equal_to:
+                    value_dict[typ] += self.incident_types[typ].location_probs[l]
+
+        # use value_dict to update values
+        for typ, value in value_dict.items():
+            self.incident_types[typ].location_probs[loc] = value
+
+        # obtain sums of probabilities
+        sum_probs = {typ: np.sum(list(self.incident_types[typ].location_probs.values()))}
+
+        # normalize probabilities
+        for typ, factor in sum_probs.items():
+            self.incident_types[typ].location_probs = \
+                {l: v / factor for l, v in list(self.incident_types[typ].location_probs.items())}
+
+        return sum_probs
+
 
 class BigIncidentSampler():
     """Class that simulates big incidents at random times. Mostly useful as a starting

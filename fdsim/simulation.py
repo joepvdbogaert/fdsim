@@ -1180,6 +1180,42 @@ class Simulator():
         self.isampler.set_custom_forecast(forecast, start_time=start_time, end_time=end_time)
         progress("Forecast updated and sampling dictionary re-created.", verbose=self.verbose)
 
+    def set_location_incident_rates(self, loc, equal_to=None, value_dict=None, types=None):
+        """Set the incident rates of a location equal to that of one or more other locations.
+
+        Updating the incident rates works by changing the spatial distributions of incident types.
+        The probabilities are first set to the given values, then they are normalized again
+        to form a proper probability distribution. The forecast is updated accordingly, so that
+        incident rates in other areas remain the same. This can be done using a dictionary
+        of probabilities for each incident type or by setting the incident rate equal to that
+        of one or more other locations. 
+
+        Parameters
+        ----------
+        loc: str
+            The location to set the probabilities for.
+        equal_to: str or list(str)
+            The location(s) from which to copy the incident rates. ignored if value_dict is provided.
+        value_dict: dict
+            Dictionary specifying the incident types to change and the specific probability to
+            set them to like {'type' -> prob}.
+        types: list(str)
+            The incident types to change the probabilities of. If None, uses all. Ignored if a
+            value_dict is provided.
+        """
+        # change the spatial distributions of incident types
+        correction_factors = self.isampler.set_location_probs(loc, equal_to=equal_to,
+                                                              value_dict=value_dict, types=types)
+
+        # correct the overall forecast per incident type using the correction factors
+        forecast = self.isampler.predictor.get_forecast()
+        for typ, factor in correction_factors.items():
+            forecast.loc[:, typ] = forecast.loc[:, typ].values * factor
+        self.set_custom_forecast(forecast)
+
+        progress("Spatial distributions and arrival rates of {} updated"
+                 .format(list(correction_factors.keys())), verbose=self.verbose)
+
     def simulate_big_incident(self, forced_num_ts=None):
         """Simulate a big incident at a random time in a random place. This method is mostly
         useful to create a low-coverage starting point for further simulation.
