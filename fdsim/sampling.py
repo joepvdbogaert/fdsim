@@ -10,9 +10,11 @@ from fdsim.incidentfitting import (
     get_vehicle_requirements_probabilities,
     get_spatial_distribution_per_type,
     get_building_function_probabilities,
+    get_overall_building_dist,
     get_big_incident_data,
     get_big_incident_arrival_dist,
     get_big_incident_type_dist,
+    prepare_incidents_for_spatial_analysis
 )
 
 from fdsim.predictors import ProphetIncidentPredictor, BasicLambdaForecaster
@@ -69,7 +71,7 @@ class ResponseTimeSampler():
                               " now needs OSRM API access to prepare the data. "
                               "Given directory: {}.".format(self.data_dir))
 
-    def fit(self, incidents=None, deployments=None, stations=None,
+    def fit(self, incidents=None, deployments=None, stations=None, loc_coords=None,
             vehicle_types=["TS", "RV", "HV", "WO"], osrm_host="http://192.168.56.101:5000",
             save_prepared_data=False, location_col="hub_vak_bk",
             volunteer_stations=["DRIEMOND", "DUIVENDRECHT", "AMSTELVEEN VRIJWILLIG"]):
@@ -123,9 +125,16 @@ class ResponseTimeSampler():
             else:
                 raise ValueError("No prepared data loaded and not all data fed to 'fit()'.")
 
-        progress("Extracting station and location coordinates.", verbose=self.verbose)
-        self.location_coords, self.station_coords = \
-            get_coordinates_locations_stations(self.data, location_col=location_col)
+        if loc_coords is None:
+            progress("Location coordinates provided. Extracting station coordinates",
+                     verbose=self.verbose)
+            self.location_coords = loc_coords
+            _, self.station_coords = get_coordinates_locations_stations(self.data,
+                                                                        location_col=location_col)
+        else:
+            progress("Extracting station and location coordinates.", verbose=self.verbose)
+            self.location_coords, self.station_coords = \
+                get_coordinates_locations_stations(self.data, location_col=location_col)
 
         progress('Fitting random variables on response time...', verbose=self.verbose)
         self.high_prio_data = (self.data[(self.data["dim_prioriteit_prio"] == 1) &
@@ -421,13 +430,17 @@ class IncidentSampler():
 
     predictors = ["prophet", "basic"]
 
-    def __init__(self, incidents, deployments, vehicle_types, locations, start_time=None,
+    def __init__(self, incidents, deployments, vehicle_types, location_ids, start_time=None,
                  end_time=None, predictor="basic", fc_dir="/data", verbose=True):
         """ Initialize all properties by extracting probabilities from the data. """
         self.incidents = incidents[
-                np.in1d(incidents["hub_vak_bk"].fillna(0).astype(int).astype(str), locations)]
+                np.in1d(incidents["hub_vak_bk"].fillna(0).astype(int).astype(str), location_ids)]
         self.deployments = deployments
         self.vehicle_types = vehicle_types
+
+        if not isinstance(location_ids[0], str):
+            raise ValueError('locations must be an iterable of strings')
+        self.location_ids = location_ids
         self.verbose = verbose
 
         self.types = self._infer_incident_types()
@@ -519,7 +532,7 @@ class IncidentSampler():
                                                                self.vehicle_types)
 
         progress("Getting spatial distributions.", verbose=self.verbose)
-        location_probs = get_spatial_distribution_per_type(self.incidents)
+        location_probs = get_spatial_distribution_per_type(self.incidents, locations=self.location_ids)
 
         progress("Initializing incident types.", verbose=self.verbose)
         self.incident_types = {t: IncidentType(prio_probs[t], vehicle_probs[t],
@@ -532,7 +545,7 @@ class IncidentSampler():
         own distribution over building functions that is used during sampling.
         """
         progress("Getting building function probabilities.", verbose=self.verbose)
-        building_probs = get_building_function_probabilities(self.incidents)
+        building_probs = get_building_function_probabilities(self.incidents, locations=self.location_ids)
 
         progress("Initializing demand locations", verbose=self.verbose)
         self.locations = {l: DemandLocation(l, building_probs[l])
@@ -704,13 +717,19 @@ class IncidentSampler():
             self.incident_types[typ].location_probs[loc] = value
 
         # obtain sums of probabilities
-        sum_probs = {typ: np.sum(list(self.incident_types[typ].location_probs.values()))}
+        sum_probs = {typ: np.sum(list(self.incident_types[typ].location_probs.values())) for typ in types}
 
         # normalize probabilities
         for typ, factor in sum_probs.items():
             self.incident_types[typ].location_probs = \
                 {l: v / factor for l, v in list(self.incident_types[typ].location_probs.items())}
 
+        # also update the building function probabilities
+        incidents = prepare_incidents_for_spatial_analysis(self.incidents)
+        select_incidents = incidents[np.in1d(incidents['hub_vak_bk'], equal_to)].copy()
+        self.locations[loc].building_probs = get_overall_building_dist(select_incidents)
+
+        # return the factors with which total incident rates per type have changed
         return sum_probs
 
 
