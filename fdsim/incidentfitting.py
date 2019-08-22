@@ -118,7 +118,7 @@ def get_vehicle_requirements_probabilities(incidents, deployments, vehicles):
     return counted_dict
 
 
-def get_spatial_distribution_per_type(incidents, location_col="hub_vak_bk"):
+def get_spatial_distribution_per_type(incidents, location_col="hub_vak_bk", locations=None):
     """Obtain the distribution over demand locations for
     every incident type.
 
@@ -126,9 +126,13 @@ def get_spatial_distribution_per_type(incidents, location_col="hub_vak_bk"):
     ----------
     incidents: pd.DataFrame
         The log of incidents to obtain probabilities from.
-    location_col: str (optional)
+    location_col: str, default='hub_vak_bk'
         The column in 'incidents' to use as identifier for
         demand location.
+    locations: list(str), default=None
+        The locations that should be present in the result. If None, only incorporates
+        the locations that have had incidents in the past for the concerning
+        incident type.
 
     Returns
     -------
@@ -140,11 +144,20 @@ def get_spatial_distribution_per_type(incidents, location_col="hub_vak_bk"):
 
     # group and count
     grouped = incidents.groupby(["dim_incident_incident_type", location_col])
-    counted = grouped["dim_incident_id"].count().reset_index()
+    counted = grouped["dim_incident_id"].count()
 
+    # make sure all locations are present if they are provided
+    if locations is not None:
+        counted = counted.reindex(pd.MultiIndex.from_product([incidents['dim_incident_incident_type'].unique(), locations],
+                                                             names=['dim_incident_incident_type', location_col]),
+                                  fill_value=0)
+
+    # calculate probabilties
+    counted = counted.reset_index()
     counted["prob"] = counted.groupby("dim_incident_incident_type")["dim_incident_id"] \
                              .transform(lambda x: x / x.sum())
 
+    # return as a dictionary
     counted_dict = counted.groupby("dim_incident_incident_type") \
         .apply(lambda x: x.set_index(location_col)["prob"].to_dict()) \
         .to_dict()
@@ -152,7 +165,7 @@ def get_spatial_distribution_per_type(incidents, location_col="hub_vak_bk"):
     return counted_dict
 
 
-def get_building_function_probabilities(incidents, location_col="hub_vak_bk"):
+def get_building_function_probabilities(incidents, location_col="hub_vak_bk", locations=None):
     """Find the distribution of building functions per demand location.
 
     Parameters
@@ -167,16 +180,15 @@ def get_building_function_probabilities(incidents, location_col="hub_vak_bk"):
     A nested dictionary like:
     `{'location id' -> {'incident type' -> {'building function' -> probability}}}`.
     """
-
     incidents = prepare_incidents_for_spatial_analysis(incidents)
-
     grouped = incidents.groupby([location_col, "dim_incident_incident_type",
                                  "inc_dim_object_functie"])["dim_incident_id"] \
                        .count().reset_index()
 
     grouped["prob"] = (
         grouped.groupby([location_col, "dim_incident_incident_type"])["dim_incident_id"]
-               .transform(lambda x: x / x.sum()))
+               .transform(lambda x: x / x.sum())
+    )
 
     partial_dict = grouped.groupby([location_col, "dim_incident_incident_type"]).apply(
         lambda x: x.set_index("inc_dim_object_functie")["prob"].to_dict()) \
@@ -186,7 +198,30 @@ def get_building_function_probabilities(incidents, location_col="hub_vak_bk"):
         .apply(lambda x: x.set_index("dim_incident_incident_type")[0].to_dict()) \
         .to_dict()
 
+    # add the locations that are not in the incident data.
+    if locations is not None:
+        # get overall distribution
+        overall_dist = get_overall_building_dist(incidents, location_col=location_col)
+        # add to locations that are not in the building_dict
+        locs_to_add = list(set(locations) - set(building_dict.keys()))
+        for loc in locs_to_add:
+            building_dict[loc] = overall_dist
+
     return building_dict
+
+
+def get_overall_building_dist(incidents, location_col="hub_vak_bk"):
+    """Get aggregated building function distribution for a list of locations."""
+    overall_dist = (incidents.groupby(['dim_incident_incident_type', 'inc_dim_object_functie'])
+                             .count()
+                             .reset_index())
+
+    overall_dist['prob'] = (overall_dist.groupby('dim_incident_incident_type')['dim_incident_id']
+                                        .transform(lambda x: x / x.sum()))
+    overall_dist = (overall_dist.groupby("dim_incident_incident_type")
+                                .apply(lambda x: x.set_index('inc_dim_object_functie')['prob'].to_dict())
+                                .to_dict())
+    return overall_dist
 
 
 def get_big_incident_type_dist(big_incidents, types=None):
