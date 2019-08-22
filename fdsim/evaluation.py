@@ -272,6 +272,7 @@ class Evaluator(object):
                 data = data[np.in1d(data[col], values)].copy()
             elif len(values) == 1:
                 values = values[0]
+                data = data[data[col] == values].copy()
             else:
                 raise ValueError("'values' cannot be empty. Received: {}.".format(values))
         else:  # 'values' is a single value (str, float, int, etc.)
