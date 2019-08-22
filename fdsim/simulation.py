@@ -43,6 +43,9 @@ class Simulator():
     vehicle_types: array-like of strings, optional
         The vehicle types to incorporate in the simulation. Optional, defaults
         to ["TS", "RV", "HV", "WO"].
+    location_coords: dict, optional
+        The coordinates of all relevant locations like {'loc' -> (lon, lat)}.
+        The keys (locations) must be strings.
     predictor: str, optional
         Type of predictor to use. Defaults to 'prophet', which uses Facebook's
         Prophet package to forecast incident rate per incident type based on trend
@@ -112,7 +115,7 @@ class Simulator():
 
     def __init__(self, incidents, deployments, stations, resource_allocation,
                  load_response_data=True, load_time_matrix=True, save_response_data=False,
-                 save_time_matrix=False, vehicle_types=["TS", "RV", "HV", "WO"],
+                 save_time_matrix=False, vehicle_types=["TS", "RV", "HV", "WO"], location_coords=None,
                  predictor="basic", max_target=18, start_time=None, end_time=None, data_dir="data",
                  osrm_host="http://192.168.56.101:5000", location_col="hub_vak_bk", big_vehicles=["TS"],
                  big_min_ts=3, big_types=["Binnenbrand", "Buitenbrand", "Hulpverlening algemeen"],
@@ -133,7 +136,7 @@ class Simulator():
                                             verbose=verbose)
 
         self.rsampler.fit(incidents=incidents, deployments=deployments, stations=stations,
-                          vehicle_types=vehicle_types, osrm_host=osrm_host,
+                          loc_coords=location_coords, vehicle_types=vehicle_types, osrm_host=osrm_host,
                           save_prepared_data=save_response_data, location_col=location_col)
 
         progress("Fitting incident distributions.", verbose=self.verbose)
@@ -170,6 +173,7 @@ class Simulator():
                                               self.end_time, min_ts=big_min_ts,
                                               vehicles=big_vehicles, types=big_types)
 
+        self.max_target = max_target
         self.set_max_target(max_target)
         progress("Simulator is ready. At your service.", verbose=self.verbose)
 
@@ -801,6 +805,7 @@ class Simulator():
         self.rsampler._create_response_time_generators()
         self.big_sampler._create_big_incident_generator()
         self.isampler.reset_time()
+        self.set_max_target(self.max_target)
 
     def set_resource_allocation(self, resource_allocation):
         """ Assign custom allocation of vehicles to stations.
