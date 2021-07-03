@@ -10,9 +10,9 @@ def lonlat_to_xy(lon, lat):
     Requires `pyproj` to be installed.
     """
     from pyproj import Proj, transform
-    inProj = Proj("+init=EPSG:4326")
-    outProj = Proj("+init=EPSG:28992")
-    x, y = transform(inProj, outProj, lon, lat)
+    inProj = Proj("EPSG:4326")
+    outProj = Proj("EPSG:28992")
+    x, y = transform(inProj, outProj, lon, lat,always_xy=True)
     return x, y
 
 
@@ -22,9 +22,9 @@ def xy_to_lonlat(x, y):
     Requires `pyproj` to be installed.
     """
     from pyproj import Proj, transform
-    outProj = Proj("+init=EPSG:4326")
-    inProj = Proj("+init=EPSG:28992")
-    lon, lat = transform(inProj, outProj, x, y)
+    outProj = Proj("EPSG:4326")
+    inProj = Proj("EPSG:28992")
+    lon, lat = transform(inProj, outProj, x, y, always_xy=True)
     return lon, lat
 
 
