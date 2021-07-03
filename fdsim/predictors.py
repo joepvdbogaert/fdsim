@@ -315,7 +315,7 @@ class ProphetIncidentPredictor(BaseIncidentPredictor):
             all incident types in the data, except 'nan' and 'NVT'.
             Defaults to None.
         """
-
+        from fbprophet import Prophet
         if types is not None:
             self.types = types
         else:
@@ -325,7 +325,6 @@ class ProphetIncidentPredictor(BaseIncidentPredictor):
                           .unique() if t not in ["nan", "NVT", np.nan]]
 
         progress("Preparing incident data for analysis...", verbose=self.verbose)
-
         self.incidents = self._prep_data_for_prediction(data)
         self.incidents["hourly_datetime"] = self._create_date_hour_column(
             self.incidents,
@@ -643,6 +642,12 @@ class BasicLambdaForecaster(BaseIncidentPredictor):
             progress("Using incidents after {}.".format(start))
             data = data[data[self.date_col] >= start].copy()
 
+        len1 = len(data)
+        data = data[~data[self.type_col].isnull()].copy()
+        if len(data) < len1:
+            progress("Dropped {} incidents without incident type".format(
+                len1 - len(data), verbose=self.verbose
+            ))
         progress("Data filtered.", verbose=self.verbose)
         return data
 
