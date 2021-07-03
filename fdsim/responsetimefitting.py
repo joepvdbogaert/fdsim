@@ -82,7 +82,7 @@ def prepare_data_for_response_time_analysis(incidents, deployments, stations, ve
 
 
 def get_osrm_distance_and_duration(longlat_origin, longlat_destination,
-                                   osrm_host="http://192.168.56.101:5000"):
+                                   osrm_host="http://localhost:5000"):
     """ Calculate distance over the road and normal travel duration from
         one point to the other.
 
@@ -118,7 +118,7 @@ def get_osrm_distance_and_duration(longlat_origin, longlat_destination,
     return result["distance"], result["duration"]
 
 
-def add_osrm_distance_and_duration(df, osrm_host="http://192.168.56.101:5000"):
+def add_osrm_distance_and_duration(df, osrm_host="http://localhost:5000"):
     """ Calculate distance and duration over the road from station to incident
         for every incident in the data.
 
@@ -130,7 +130,7 @@ def add_osrm_distance_and_duration(df, osrm_host="http://192.168.56.101:5000"):
         incident_longitude, incident_latitude}.If not present, call
         'prepare_data_for_response_time_analysis' first.
     osrm_host: str
-        The URL to the OSRM API, defaults to 'http://192.168.56.101:5000', which is the
+        The URL to the OSRM API, defaults to 'http://localhost:5000', which is the
         default if running OSRM locally.
 
     Returns
@@ -152,7 +152,7 @@ def add_osrm_distance_and_duration(df, osrm_host="http://192.168.56.101:5000"):
     df[["osrm_distance", "osrm_duration"]] = \
         df.apply(lambda x: get_osrm_distance_and_duration(
                     (x["station_longitude"], x["station_latitude"]),
-                    (x["incident_longitude"], x["incident_latitude"])),
+                    (x["incident_longitude"], x["incident_latitude"]), osrm_host=osrm_host),
                  axis=1).apply(pd.Series)
 
     return df

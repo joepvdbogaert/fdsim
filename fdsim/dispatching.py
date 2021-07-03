@@ -70,7 +70,7 @@ class ShortestDurationDispatcher(BaseDispatcher):
     """
 
     def __init__(self, demand_locs=None, station_locs=None,
-                 osrm_host="http://192.168.56.101:5000", load_matrix=True,
+                 osrm_host="http://localhost:5000", load_matrix=True,
                  save_matrix=False, data_dir="data", verbose=True):
         """ Create the matrix of travel durations with OSRM. """
         self.osrm_host = osrm_host

@@ -63,7 +63,7 @@ class Simulator():
         The path to the directory where data should be loaded from and saved to.
         Defaults to '/data/'.
     osrm_host: str, optional
-        URL to the OSRM API, defaults to 'http://192.168.56.101:5000'
+        URL to the OSRM API, defaults to 'http://localhost:5000'
     location_col: str, optional
         The name of the column that identifies the demand locations, defaults to
         'hub_vak_bk'. This is also the only currently supported value.
@@ -117,7 +117,7 @@ class Simulator():
                  load_response_data=True, load_time_matrix=True, save_response_data=False,
                  save_time_matrix=False, vehicle_types=["TS", "RV", "HV", "WO"], location_coords=None,
                  predictor="basic", max_target=18, start_time=None, end_time=None, data_dir="data",
-                 osrm_host="http://192.168.56.101:5000", location_col="hub_vak_bk", big_vehicles=["TS"],
+                 osrm_host="http://localhost:5000", location_col="hub_vak_bk", big_vehicles=["TS"],
                  big_min_ts=3, big_types=["Binnenbrand", "Buitenbrand", "Hulpverlening algemeen"],
                  verbose=True):
 
@@ -144,7 +144,7 @@ class Simulator():
         self.isampler = IncidentSampler(incidents, deployments, vehicle_types, locations,
                                         start_time=start_time, end_time=end_time,
                                         predictor=predictor,
-                                        fc_dir=os.path.join(data_dir),
+                                        fc_dir=data_dir,
                                         verbose=verbose)
 
         self.vehicles = self._create_vehicles(self.resource_allocation)
