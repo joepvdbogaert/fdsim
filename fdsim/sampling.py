@@ -64,6 +64,7 @@ class ResponseTimeSampler():
                                         dtype={"hub_vak_bk": int}, low_memory=False)
                 self.data["hub_vak_bk"] = self.data["hub_vak_bk"].astype(str)
             except FileNotFoundError:
+                print("WARNINGs")
                 warnings.warn("No prepared data found, check if 'data_dir' specifies"
                               " the right directory. If you didn't mean to "
                               "load data from disk, initialize with 'load_data=False'."
@@ -72,7 +73,7 @@ class ResponseTimeSampler():
                               "Given directory: {}.".format(self.data_dir))
 
     def fit(self, incidents=None, deployments=None, stations=None, loc_coords=None,
-            vehicle_types=["TS", "RV", "HV", "WO"], osrm_host="http://192.168.56.101:5000",
+            vehicle_types=["TS", "RV", "HV", "WO"], osrm_host="http://localhost:5000",
             save_prepared_data=False, location_col="hub_vak_bk",
             volunteer_stations=["DRIEMOND", "DUIVENDRECHT", "AMSTELVEEN VRIJWILLIG"]):
         """ Fit random variables related to response time.
@@ -125,7 +126,7 @@ class ResponseTimeSampler():
             else:
                 raise ValueError("No prepared data loaded and not all data fed to 'fit()'.")
 
-        if loc_coords is None:
+        if loc_coords is not None:
             progress("Location coordinates provided. Extracting station coordinates",
                      verbose=self.verbose)
             self.location_coords = loc_coords
@@ -333,7 +334,7 @@ class ResponseTimeSampler():
         return next(self.dispatch_generators[incident_type])
 
     def sample_travel_time(self, estimated_time, vehicle,
-                           osrm_host="http://192.168.56.101:5000"):
+                           osrm_host="http://localhost:5000"):
         """ Sample a random travel time.
 
         Parameters
@@ -357,7 +358,7 @@ class ResponseTimeSampler():
 
     def sample_response_time(self, incident_type, location_id, station_name, vehicle_type,
                              appointment, prio, estimated_time=None,
-                             osrm_host="http://192.168.56.101:5000"):
+                             osrm_host="http://localhost:5000"):
         """ Sample a random response time based on deployment characteristics.
 
         Parameters
